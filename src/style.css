@@ -1,0 +1,192 @@
+/* ============================================================
+   AkiMark Design Tokens — "Ethereal Glass"
+   延续 Aki-Design-System.md 设计规范
+   ============================================================ */
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('../assets/fonts/PlusJakartaSans.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('../assets/fonts/PlusJakartaSans-Italic.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fraunces';
+  src: url('../assets/fonts/Fraunces.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('../assets/fonts/IBMPlexMono.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- Colors ---- */
+  --bg-base: #0e1016;
+  --surface-1: #171a23;
+  --surface-2: #212531;
+  --border: #2e3342;
+  --text-primary: #f0eee7;
+  --text-secondary: #8d93a3;
+  --text-tertiary: #5b606e;
+
+  --accent: #6c8cff;
+  --accent-hover: #86a3ff;
+  --accent-secondary: #a78bfa;
+  --accent-tertiary: #f0a0d8;
+  --success: #4fae8a;
+  --error: #d9695f;
+  --warning: #e8a33d;
+
+  /* ---- Elevation shadows (soft, tinted) ---- */
+  --shadow-1: 0 1px 2px rgba(4, 6, 12, 0.4), 0 2px 8px rgba(4, 6, 12, 0.18);
+  --shadow-2: 0 2px 6px rgba(4, 6, 12, 0.4), 0 8px 24px rgba(4, 6, 12, 0.28);
+  --shadow-3: 0 4px 12px rgba(4, 6, 12, 0.45), 0 16px 48px rgba(4, 6, 12, 0.38);
+  --shadow-accent: 0 0 0 1px rgba(108, 140, 255, 0.25), 0 4px 20px rgba(108, 140, 255, 0.18);
+
+  /* ---- Glass morphism ---- */
+  --glass-bg: rgba(23, 26, 35, 0.62);
+  --glass-bg-strong: rgba(23, 26, 35, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 20px;
+
+  /* ---- Border Radius ---- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-full: 999px;
+
+  /* ---- Spacing ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* ---- Motion ---- */
+  --ease-default: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-hover: 150ms;
+  --duration-panel: 220ms;
+  --duration-spring: 320ms;
+
+  /* ---- Typography ---- */
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* ---- Overlay 专用：绘制层 ---- */
+  --overlay-z: 99999;
+  --toolbar-z: 100000;
+  --toast-z: 100001;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  user-select: none;
+  width: 100vw;
+  height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ---- 毛玻璃表面 ---- */
+.glass-surface {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+}
+
+/* ---- 双镶边卡片（工具栏/面板外壳）---- */
+.double-bezel {
+  position: relative;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition:
+    border-color var(--duration-hover) var(--ease-default),
+    box-shadow var(--duration-spring) var(--ease-spring),
+    transform var(--duration-spring) var(--ease-spring);
+}
+.double-bezel::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: calc(var(--radius-lg) - 5px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---- 入场动画 ---- */
+.spring-in {
+  animation: springIn var(--duration-spring) var(--ease-spring) both;
+}
+@keyframes springIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
