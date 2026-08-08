@@ -1,0 +1,634 @@
+<script setup lang="ts">
+import { onMounted, reactive, ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { AppConfig, Shortcuts } from './configTypes'
+import { COLOR_PALETTE, DEFAULT_COLOR } from './constants/colors'
+import { TOOL_DEFS } from './constants/tools'
+import { useI18n } from './i18n'
+import type { Tool } from './composables/drawingTypes'
+
+const { t } = useI18n()
+
+// ---- 表单状态 ----
+const shortcuts = reactive<Shortcuts>({
+  toggleDrawing: 'Ctrl+Shift+R',
+  clearDrawing: 'Ctrl+Shift+C',
+  togglePenetration: 'Ctrl+Shift+X',
+})
+
+const defaultTool = ref<Tool>('pen')
+const defaultColor = ref(DEFAULT_COLOR)
+const lineWidths = reactive({ stroke: 3, highlighter: 18, eraser: 24 })
+const autostart = ref(false)
+const openSettingsOnStartup = ref(true)
+
+const loading = ref(true)
+const saving = ref(false)
+const savedToast = ref(false)
+const errorMsg = ref('')
+
+// 快捷键录制
+const recordingKey = ref<'toggleDrawing' | 'clearDrawing' | 'togglePenetration' | null>(null)
+const shortcutDraft = ref('')
+
+type ShortcutKey = keyof Shortcuts
+
+const SHORTCUT_KEYS: { key: ShortcutKey; label: string }[] = [
+  { key: 'toggleDrawing', label: t('settings.toggleDrawing') },
+  { key: 'clearDrawing', label: t('settings.clearDrawing') },
+  { key: 'togglePenetration', label: t('settings.togglePenetration') },
+]
+
+const ALL_SHORTCUTS: ShortcutKey[] = ['toggleDrawing', 'clearDrawing', 'togglePenetration']
+
+// ---- 加载 ----
+onMounted(async () => {
+  try {
+    const cfg = await invoke<AppConfig>('get_config')
+    shortcuts.toggleDrawing = cfg.shortcuts.toggleDrawing
+    shortcuts.clearDrawing = cfg.shortcuts.clearDrawing
+    shortcuts.togglePenetration = cfg.shortcuts.togglePenetration
+    defaultTool.value = cfg.general.defaultTool
+    defaultColor.value = cfg.general.defaultColor
+    lineWidths.stroke = cfg.general.lineWidths.stroke
+    lineWidths.highlighter = cfg.general.lineWidths.highlighter
+    lineWidths.eraser = cfg.general.lineWidths.eraser
+    openSettingsOnStartup.value = cfg.general.openSettingsOnStartup
+
+    try {
+      autostart.value = await invoke<boolean>('get_autostart')
+    } catch {
+      autostart.value = false
+    }
+  } catch (e) {
+    errorMsg.value = String(e)
+  } finally {
+    loading.value = false
+  }
+})
+
+// ---- 快捷键录制 ----
+function startRecording(key: ShortcutKey) {
+  if (recordingKey.value === key) {
+    recordingKey.value = null
+    return
+  }
+  recordingKey.value = key
+  shortcutDraft.value = shortcuts[key]
+}
+
+function onKeyDownCapture(e: KeyboardEvent) {
+  if (!recordingKey.value) return
+  e.preventDefault()
+  e.stopPropagation()
+
+  const parts: string[] = []
+  if (e.ctrlKey) parts.push('Ctrl')
+  if (e.altKey) parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  if (e.metaKey) parts.push('Super')
+
+  const k = e.key
+  // 只接受修饰键 + 一个功能键/字母/数字
+  const isPlainKey =
+    /^[a-zA-Z0-9]$/.test(k) ||
+    ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Space', 'Tab', 'Enter', 'Escape'].includes(k)
+  if (!isPlainKey) return
+
+  // 去掉修饰键本身作为主键的情况
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(k)) return
+
+  const keyPart = k.length === 1 ? k.toUpperCase() : k
+  if (parts.length === 0) return // 必须带至少一个修饰键
+  parts.push(keyPart)
+  shortcuts[recordingKey.value] = parts.join('+')
+  recordingKey.value = null
+}
+
+/** 校验：三个快捷键不可重复，且格式非空 */
+function validateShortcuts(): string | null {
+  const values = ALL_SHORTCUTS.map((k) => shortcuts[k].trim())
+  if (values.some((v) => v === '')) return 'shortcut-empty'
+  const seen = new Set<string>()
+  for (const v of values) {
+    if (seen.has(v)) return 'shortcut-duplicate'
+    seen.add(v)
+  }
+  return null
+}
+
+// ---- 保存 ----
+async function save() {
+  const err = validateShortcuts()
+  if (err) {
+    errorMsg.value = err
+    return
+  }
+  errorMsg.value = ''
+  saving.value = true
+  try {
+    // 快捷键
+    await invoke('save_shortcuts', {
+      shortcuts: { ...shortcuts },
+    })
+    // 常规设置
+    await invoke('save_general', {
+      general: {
+        locale: 'zh-CN',
+        theme: 'dark',
+        preserveDrawings: false,
+        lineWidths: { ...lineWidths },
+        defaultTool: defaultTool.value,
+        defaultColor: defaultColor.value,
+        openSettingsOnStartup: openSettingsOnStartup.value,
+      },
+    })
+    // 自启动
+    await invoke('set_autostart', { enabled: autostart.value })
+    savedToast.value = true
+    setTimeout(() => (savedToast.value = false), 1600)
+  } catch (e) {
+    errorMsg.value = String(e)
+  } finally {
+    saving.value = false
+  }
+}
+
+// ---- 窗口 ----
+function closeWindow() {
+  getCurrentWindow().close()
+}
+</script>
+
+<template>
+  <div class="settings-root" @keydown.capture="onKeyDownCapture">
+    <!-- 头部 -->
+    <header class="settings-header">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <h1 class="settings-title">{{ t('settings.title') }}</h1>
+      <button class="icon-btn close-btn" :title="t('settings.close')" @click="closeWindow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M6 6 L18 18 M18 6 L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <main v-if="!loading" class="settings-body">
+      <!-- 全局快捷键 -->
+      <section class="section double-bezel">
+        <h2 class="section-title">{{ t('settings.shortcuts') }}</h2>
+        <div
+          v-for="item in SHORTCUT_KEYS"
+          :key="item.key"
+          class="shortcut-row"
+          :class="{ recording: recordingKey === item.key }"
+          @click="startRecording(item.key)"
+        >
+          <span class="shortcut-label">{{ item.label }}</span>
+          <span class="shortcut-value font-mono">
+            {{ recordingKey === item.key ? '…' : shortcuts[item.key] }}
+          </span>
+          <span v-if="recordingKey === item.key" class="recording-dot"></span>
+        </div>
+        <p class="section-hint">{{ t('settings.recordHint') }}</p>
+      </section>
+
+      <!-- 自启动 -->
+      <section class="section double-bezel">
+        <div class="switch-row">
+          <div>
+            <h2 class="section-title mb0">{{ t('settings.autostart') }}</h2>
+            <p class="section-hint mb0">{{ t('settings.autostartDesc') }}</p>
+          </div>
+          <button
+            class="switch"
+            :class="{ on: autostart }"
+            role="switch"
+            :aria-checked="autostart"
+            @click="autostart = !autostart"
+          >
+            <span class="switch-knob"></span>
+          </button>
+        </div>
+        <div class="switch-row">
+          <div>
+            <h2 class="section-title mb0">{{ t('settings.openSettingsOnStartup') }}</h2>
+          </div>
+          <button
+            class="switch"
+            :class="{ on: openSettingsOnStartup }"
+            role="switch"
+            :aria-checked="openSettingsOnStartup"
+            @click="openSettingsOnStartup = !openSettingsOnStartup"
+          >
+            <span class="switch-knob"></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- 画笔工具 -->
+      <section class="section double-bezel">
+        <h2 class="section-title">{{ t('settings.defaultTool') }}</h2>
+        <div class="tool-row">
+          <button
+            v-for="def in TOOL_DEFS"
+            :key="def.id"
+            class="tool-chip"
+            :class="{ active: defaultTool === def.id }"
+            @click="defaultTool = def.id"
+          >
+            {{ t(def.label) }}
+          </button>
+        </div>
+
+        <h2 class="section-title">{{ t('settings.defaultColor') }}</h2>
+        <div class="color-row">
+          <button
+            v-for="c in COLOR_PALETTE"
+            :key="c"
+            class="swatch"
+            :class="{ active: defaultColor === c }"
+            :style="{ background: c }"
+            :title="c"
+            @click="defaultColor = c"
+          />
+        </div>
+
+        <h2 class="section-title">{{ t('settings.lineWidths') }}</h2>
+        <div class="width-row">
+          <label class="width-field">
+            <span class="width-label">{{ t('tool.pen') }}</span>
+            <input v-model.number="lineWidths.stroke" type="number" min="1" max="40" class="width-input" />
+          </label>
+          <label class="width-field">
+            <span class="width-label">{{ t('tool.highlighter') }}</span>
+            <input v-model.number="lineWidths.highlighter" type="number" min="1" max="80" class="width-input" />
+          </label>
+          <label class="width-field">
+            <span class="width-label">{{ t('tool.eraser') }}</span>
+            <input v-model.number="lineWidths.eraser" type="number" min="1" max="120" class="width-input" />
+          </label>
+        </div>
+      </section>
+
+      <!-- 错误提示 -->
+      <p v-if="errorMsg" class="error-text">
+        {{ t(`settings.${errorMsg}`) || errorMsg }}
+      </p>
+    </main>
+
+    <div v-else class="settings-body loading-box">…</div>
+
+    <!-- 底部 -->
+    <footer class="settings-footer">
+      <Transition name="fade">
+        <span v-if="savedToast" class="saved-tag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12 L10 18 L20 6" />
+          </svg>
+          {{ t('settings.saved') }}
+        </span>
+      </Transition>
+      <button class="primary-btn" :disabled="saving || loading" @click="save">
+        {{ saving ? '…' : t('settings.save') }}
+      </button>
+    </footer>
+  </div>
+</template>
+
+<style scoped>
+.settings-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background:
+    radial-gradient(120% 80% at 50% -20%, rgba(108, 140, 255, 0.10), transparent 60%),
+    var(--bg-base);
+  overflow: hidden;
+}
+
+/* ---- 头部 ---- */
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-2);
+  -webkit-app-region: drag;
+}
+.brand-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  box-shadow: var(--shadow-accent);
+}
+.settings-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+  flex: 1;
+}
+.icon-btn {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--duration-hover) var(--ease-default), background var(--duration-hover) var(--ease-default);
+}
+.icon-btn:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---- 主体 ---- */
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.loading-box {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.section {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-1);
+}
+.section-title.mb0 {
+  margin-bottom: 0;
+}
+.section-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: var(--space-1) 0 0;
+  line-height: 1.5;
+}
+.section-hint.mb0 {
+  margin: 2px 0 0;
+}
+
+/* ---- 快捷键行 ---- */
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 9px var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  cursor: pointer;
+  transition: border-color var(--duration-hover) var(--ease-default), background var(--duration-hover) var(--ease-default);
+}
+.shortcut-row:hover {
+  border-color: var(--border);
+}
+.shortcut-row.recording {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: var(--shadow-accent);
+}
+.shortcut-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.shortcut-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+}
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: pulse 1s var(--ease-default) infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ---- 开关 ---- */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--duration-hover) var(--ease-default), border-color var(--duration-hover) var(--ease-default);
+  flex-shrink: 0;
+}
+.switch.on {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  border-color: transparent;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: #fff;
+  box-shadow: var(--shadow-1);
+  transition: transform var(--duration-spring) var(--ease-spring);
+}
+.switch.on .switch-knob {
+  transform: translateX(18px);
+}
+
+/* ---- 工具 / 颜色 ---- */
+.tool-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.tool-chip {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--duration-hover) var(--ease-default);
+}
+.tool-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+.tool-chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: var(--shadow-accent);
+}
+
+.color-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--duration-spring) var(--ease-spring), border-color var(--duration-hover) var(--ease-default);
+}
+.swatch:hover {
+  transform: scale(1.15);
+}
+.swatch.active {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.1);
+}
+
+/* ---- 线宽 ---- */
+.width-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-2);
+}
+.width-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.width-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.width-input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: center;
+  -webkit-app-region: no-drag;
+}
+.width-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- 错误 ---- */
+.error-text {
+  font-size: 12px;
+  color: var(--error);
+  margin: 0;
+  padding: 0 var(--space-1);
+}
+
+/* ---- 底部 ---- */
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.saved-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--success);
+}
+.saved-tag svg {
+  width: 13px;
+  height: 13px;
+}
+.primary-btn {
+  min-width: 96px;
+  padding: 9px 22px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: var(--shadow-accent);
+  transition: transform var(--duration-spring) var(--ease-spring), filter var(--duration-hover) var(--ease-default), opacity var(--duration-hover) var(--ease-default);
+}
+.primary-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+.primary-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--duration-hover) var(--ease-default);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>
