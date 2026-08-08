@@ -4,29 +4,29 @@
    ============================================================ */
 
 @font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('../assets/fonts/PlusJakartaSans.woff2') format('woff2');
+  font-family: "Plus Jakarta Sans";
+  src: url("../assets/fonts/PlusJakartaSans.woff2") format("woff2");
   font-weight: 200 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('../assets/fonts/PlusJakartaSans-Italic.woff2') format('woff2');
+  font-family: "Plus Jakarta Sans";
+  src: url("../assets/fonts/PlusJakartaSans-Italic.woff2") format("woff2");
   font-weight: 200 800;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Fraunces';
-  src: url('../assets/fonts/Fraunces.woff2') format('woff2');
+  font-family: "Fraunces";
+  src: url("../assets/fonts/Fraunces.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'IBM Plex Mono';
-  src: url('../assets/fonts/IBMPlexMono.woff2') format('woff2');
+  font-family: "IBM Plex Mono";
+  src: url("../assets/fonts/IBMPlexMono.woff2") format("woff2");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
@@ -54,7 +54,8 @@
   --shadow-1: 0 1px 2px rgba(4, 6, 12, 0.4), 0 2px 8px rgba(4, 6, 12, 0.18);
   --shadow-2: 0 2px 6px rgba(4, 6, 12, 0.4), 0 8px 24px rgba(4, 6, 12, 0.28);
   --shadow-3: 0 4px 12px rgba(4, 6, 12, 0.45), 0 16px 48px rgba(4, 6, 12, 0.38);
-  --shadow-accent: 0 0 0 1px rgba(108, 140, 255, 0.25), 0 4px 20px rgba(108, 140, 255, 0.18);
+  --shadow-accent:
+    0 0 0 1px rgba(108, 140, 255, 0.25), 0 4px 20px rgba(108, 140, 255, 0.18);
 
   /* ---- Glass morphism ---- */
   --glass-bg: rgba(23, 26, 35, 0.62);
@@ -86,9 +87,9 @@
   --duration-spring: 320ms;
 
   /* ---- Typography ---- */
-  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  --font-display: 'Fraunces', Georgia, serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   /* ---- Overlay 专用：绘制层 ---- */
   --overlay-z: 99999;
@@ -138,14 +139,16 @@ body {
   backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow:
+    var(--shadow-2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
   transition:
     border-color var(--duration-hover) var(--ease-default),
     box-shadow var(--duration-spring) var(--ease-spring),
     transform var(--duration-spring) var(--ease-spring);
 }
 .double-bezel::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 5px;
   border: 1px solid rgba(255, 255, 255, 0.045);
