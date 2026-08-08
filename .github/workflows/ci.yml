@@ -10,7 +10,7 @@ jobs:
     name: Frontend (vue-tsc + vite)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -32,7 +32,7 @@ jobs:
     # AkiMark uses win32 APIs (src/win32.rs), so it only builds on Windows.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
