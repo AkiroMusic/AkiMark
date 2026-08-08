@@ -1,63 +1,65 @@
 <script setup lang="ts">
-import { TOOL_DEFS } from '../constants/tools'
-import { COLOR_PALETTE } from '../constants/colors'
-import { useI18n } from '../i18n'
-import type { Tool } from '../composables/drawingTypes'
+import { TOOL_DEFS } from "../constants/tools";
+import { COLOR_PALETTE } from "../constants/colors";
+import { useI18n } from "../i18n";
+import type { Tool } from "../composables/drawingTypes";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 const props = defineProps<{
-  tool: Tool
-  color: string
-  lineWidth: { stroke: number; highlighter: number; eraser: number }
-  canUndo: boolean
-  canRedo: boolean
-  canClear: boolean
-  penetrating: boolean
-}>()
+  tool: Tool;
+  color: string;
+  lineWidth: { stroke: number; highlighter: number; eraser: number };
+  canUndo: boolean;
+  canRedo: boolean;
+  canClear: boolean;
+  penetrating: boolean;
+}>();
 
 const emit = defineEmits<{
-  selectTool: [tool: Tool]
-  selectColor: [color: string]
-  updateWidth: [width: { stroke?: number; highlighter?: number; eraser?: number }]
-  undo: []
-  redo: []
-  clear: []
-  penetrate: []
-  exit: []
-}>()
+  selectTool: [tool: Tool];
+  selectColor: [color: string];
+  updateWidth: [
+    width: { stroke?: number; highlighter?: number; eraser?: number },
+  ];
+  undo: [];
+  redo: [];
+  clear: [];
+  penetrate: [];
+  exit: [];
+}>();
 
 // 工具图标（Feather 风格内联 SVG，24 viewBox / 1.7 stroke）
 function toolIcon(tool: Tool) {
   switch (tool) {
-    case 'pen':
-      return 'M12 19 L19 5 L16 4 L4 15 Z M12 19 L5 19 Z'
-    case 'highlighter':
-      return 'M9 11 L18 2 L22 6 L13 15 Z M5 19 L9 15 M7 17 L3 21 Z'
-    case 'eraser':
-      return 'M7 21 L20 8 L16 4 L3 17 Z M7 21 L10 18 M14 14 L18 18'
+    case "pen":
+      return "M12 19 L19 5 L16 4 L4 15 Z M12 19 L5 19 Z";
+    case "highlighter":
+      return "M9 11 L18 2 L22 6 L13 15 Z M5 19 L9 15 M7 17 L3 21 Z";
+    case "eraser":
+      return "M7 21 L20 8 L16 4 L3 17 Z M7 21 L10 18 M14 14 L18 18";
   }
 }
 
 function isActiveTool(tool: Tool) {
-  return tool === props.tool
+  return tool === props.tool;
 }
 
 // 线宽调节
 function widthOf(group: keyof typeof props.lineWidth) {
-  return props.lineWidth[group]
+  return props.lineWidth[group];
 }
 
 function changeWidth(delta: number) {
-  const group: Record<Tool, 'stroke' | 'highlighter' | 'eraser'> = {
-    pen: 'stroke',
-    highlighter: 'highlighter',
-    eraser: 'eraser',
-  }
-  const key = group[props.tool]
-  const cur = props.lineWidth[key]
-  const next = Math.min(40, Math.max(1, Math.round(cur) + delta))
-  emit('updateWidth', { [key]: next } as Record<string, number>)
+  const group: Record<Tool, "stroke" | "highlighter" | "eraser"> = {
+    pen: "stroke",
+    highlighter: "highlighter",
+    eraser: "eraser",
+  };
+  const key = group[props.tool];
+  const cur = props.lineWidth[key];
+  const next = Math.min(40, Math.max(1, Math.round(cur) + delta));
+  emit("updateWidth", { [key]: next } as Record<string, number>);
 }
 </script>
 
@@ -73,7 +75,14 @@ function changeWidth(delta: number) {
         :title="`${t(def.label)} (${def.hotkey})`"
         @click="emit('selectTool', def.id)"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path :d="toolIcon(def.id)" />
         </svg>
       </button>
@@ -95,41 +104,110 @@ function changeWidth(delta: number) {
     <!-- 线宽 -->
     <div class="toolbar-group width-group">
       <button class="mini-btn" @click="changeWidth(-1)">−</button>
-      <span class="width-value">{{ Math.round(widthOf((tool === 'pen' ? 'stroke' : tool) as 'stroke' | 'highlighter' | 'eraser')) }}</span>
+      <span class="width-value">{{
+        Math.round(
+          widthOf(
+            (tool === "pen" ? "stroke" : tool) as
+              "stroke" | "highlighter" | "eraser",
+          ),
+        )
+      }}</span>
       <button class="mini-btn" @click="changeWidth(1)">+</button>
     </div>
 
     <!-- 动作组 -->
     <div class="toolbar-group action-group">
-      <button class="mini-btn" :disabled="!canUndo" :title="t('action.undo')" @click="emit('undo')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="mini-btn"
+        :disabled="!canUndo"
+        :title="t('action.undo')"
+        @click="emit('undo')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M3 7 L9 13 L3 13 Z M9 7 H15 A5 5 0 0 1 15 17 H7" />
         </svg>
       </button>
-      <button class="mini-btn" :disabled="!canRedo" :title="t('action.redo')" @click="emit('redo')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="mini-btn"
+        :disabled="!canRedo"
+        :title="t('action.redo')"
+        @click="emit('redo')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M21 7 L15 13 L21 13 Z M15 7 H9 A5 5 0 0 0 9 17 H17" />
         </svg>
       </button>
-      <button class="mini-btn" :disabled="!canClear" :title="t('action.clear')" @click="emit('clear')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="mini-btn"
+        :disabled="!canClear"
+        :title="t('action.clear')"
+        @click="emit('clear')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M3 6 H21 M8 6 V4 H16 V6 M6 6 L7 20 H17 L18 6" />
         </svg>
       </button>
-      <button class="mini-btn" :title="t('action.penetrate')" @click="emit('penetrate')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="mini-btn"
+        :title="t('action.penetrate')"
+        @click="emit('penetrate')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <circle cx="12" cy="12" r="3" />
-          <path d="M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M5 5 L8 8 M16 16 L19 19 M19 5 L16 8 M8 16 L5 19" />
+          <path
+            d="M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M5 5 L8 8 M16 16 L19 19 M19 5 L16 8 M8 16 L5 19"
+          />
         </svg>
       </button>
-      <button class="mini-btn danger" :title="t('action.exit')" @click="emit('exit')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H9 M16 17 L21 12 L16 7 M21 12 H9" />
+      <button
+        class="mini-btn danger"
+        :title="t('action.exit')"
+        @click="emit('exit')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M9 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H9 M16 17 L21 12 L16 7 M21 12 H9"
+          />
         </svg>
       </button>
     </div>
 
-    <div class="toolbar-hint">{{ t('toolbar.space') }}</div>
+    <div class="toolbar-hint">{{ t("toolbar.space") }}</div>
   </div>
 </template>
 

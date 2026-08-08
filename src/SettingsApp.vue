@@ -1,163 +1,186 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { AppConfig, Shortcuts } from './configTypes'
-import { COLOR_PALETTE, DEFAULT_COLOR } from './constants/colors'
-import { TOOL_DEFS } from './constants/tools'
-import { useI18n } from './i18n'
-import type { Tool } from './composables/drawingTypes'
+import { onMounted, reactive, ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { AppConfig, Shortcuts } from "./configTypes";
+import { COLOR_PALETTE, DEFAULT_COLOR } from "./constants/colors";
+import { TOOL_DEFS } from "./constants/tools";
+import { useI18n } from "./i18n";
+import type { Tool } from "./composables/drawingTypes";
 
-const { t } = useI18n()
+const { t } = useI18n();
 
 // ---- 表单状态 ----
 const shortcuts = reactive<Shortcuts>({
-  toggleDrawing: 'Ctrl+Shift+R',
-  clearDrawing: 'Ctrl+Shift+C',
-  togglePenetration: 'Ctrl+Shift+X',
-})
+  toggleDrawing: "Ctrl+Shift+R",
+  clearDrawing: "Ctrl+Shift+C",
+  togglePenetration: "Ctrl+Shift+X",
+});
 
-const defaultTool = ref<Tool>('pen')
-const defaultColor = ref(DEFAULT_COLOR)
-const lineWidths = reactive({ stroke: 3, highlighter: 18, eraser: 24 })
-const autostart = ref(false)
-const openSettingsOnStartup = ref(true)
+const defaultTool = ref<Tool>("pen");
+const defaultColor = ref(DEFAULT_COLOR);
+const lineWidths = reactive({ stroke: 3, highlighter: 18, eraser: 24 });
+const autostart = ref(false);
+const openSettingsOnStartup = ref(true);
 
-const loading = ref(true)
-const saving = ref(false)
-const savedToast = ref(false)
-const errorMsg = ref('')
+const loading = ref(true);
+const saving = ref(false);
+const savedToast = ref(false);
+const errorMsg = ref("");
 
 // 快捷键录制
-const recordingKey = ref<'toggleDrawing' | 'clearDrawing' | 'togglePenetration' | null>(null)
-const shortcutDraft = ref('')
+const recordingKey = ref<
+  "toggleDrawing" | "clearDrawing" | "togglePenetration" | null
+>(null);
+const shortcutDraft = ref("");
 
-type ShortcutKey = keyof Shortcuts
+type ShortcutKey = keyof Shortcuts;
 
 const SHORTCUT_KEYS: { key: ShortcutKey; label: string }[] = [
-  { key: 'toggleDrawing', label: t('settings.toggleDrawing') },
-  { key: 'clearDrawing', label: t('settings.clearDrawing') },
-  { key: 'togglePenetration', label: t('settings.togglePenetration') },
-]
+  { key: "toggleDrawing", label: t("settings.toggleDrawing") },
+  { key: "clearDrawing", label: t("settings.clearDrawing") },
+  { key: "togglePenetration", label: t("settings.togglePenetration") },
+];
 
-const ALL_SHORTCUTS: ShortcutKey[] = ['toggleDrawing', 'clearDrawing', 'togglePenetration']
+const ALL_SHORTCUTS: ShortcutKey[] = [
+  "toggleDrawing",
+  "clearDrawing",
+  "togglePenetration",
+];
 
 // ---- 加载 ----
 onMounted(async () => {
   try {
-    const cfg = await invoke<AppConfig>('get_config')
-    shortcuts.toggleDrawing = cfg.shortcuts.toggleDrawing
-    shortcuts.clearDrawing = cfg.shortcuts.clearDrawing
-    shortcuts.togglePenetration = cfg.shortcuts.togglePenetration
-    defaultTool.value = cfg.general.defaultTool
-    defaultColor.value = cfg.general.defaultColor
-    lineWidths.stroke = cfg.general.lineWidths.stroke
-    lineWidths.highlighter = cfg.general.lineWidths.highlighter
-    lineWidths.eraser = cfg.general.lineWidths.eraser
-    openSettingsOnStartup.value = cfg.general.openSettingsOnStartup
+    const cfg = await invoke<AppConfig>("get_config");
+    shortcuts.toggleDrawing = cfg.shortcuts.toggleDrawing;
+    shortcuts.clearDrawing = cfg.shortcuts.clearDrawing;
+    shortcuts.togglePenetration = cfg.shortcuts.togglePenetration;
+    defaultTool.value = cfg.general.defaultTool;
+    defaultColor.value = cfg.general.defaultColor;
+    lineWidths.stroke = cfg.general.lineWidths.stroke;
+    lineWidths.highlighter = cfg.general.lineWidths.highlighter;
+    lineWidths.eraser = cfg.general.lineWidths.eraser;
+    openSettingsOnStartup.value = cfg.general.openSettingsOnStartup;
 
     try {
-      autostart.value = await invoke<boolean>('get_autostart')
+      autostart.value = await invoke<boolean>("get_autostart");
     } catch {
-      autostart.value = false
+      autostart.value = false;
     }
   } catch (e) {
-    errorMsg.value = String(e)
+    errorMsg.value = String(e);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-})
+});
 
 // ---- 快捷键录制 ----
 function startRecording(key: ShortcutKey) {
   if (recordingKey.value === key) {
-    recordingKey.value = null
-    return
+    recordingKey.value = null;
+    return;
   }
-  recordingKey.value = key
-  shortcutDraft.value = shortcuts[key]
+  recordingKey.value = key;
+  shortcutDraft.value = shortcuts[key];
 }
 
 function onKeyDownCapture(e: KeyboardEvent) {
-  if (!recordingKey.value) return
-  e.preventDefault()
-  e.stopPropagation()
+  if (!recordingKey.value) return;
+  e.preventDefault();
+  e.stopPropagation();
 
-  const parts: string[] = []
-  if (e.ctrlKey) parts.push('Ctrl')
-  if (e.altKey) parts.push('Alt')
-  if (e.shiftKey) parts.push('Shift')
-  if (e.metaKey) parts.push('Super')
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.metaKey) parts.push("Super");
 
-  const k = e.key
+  const k = e.key;
   // 只接受修饰键 + 一个功能键/字母/数字
   const isPlainKey =
     /^[a-zA-Z0-9]$/.test(k) ||
-    ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Space', 'Tab', 'Enter', 'Escape'].includes(k)
-  if (!isPlainKey) return
+    [
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "F6",
+      "F7",
+      "F8",
+      "F9",
+      "F10",
+      "F11",
+      "F12",
+      "Space",
+      "Tab",
+      "Enter",
+      "Escape",
+    ].includes(k);
+  if (!isPlainKey) return;
 
   // 去掉修饰键本身作为主键的情况
-  if (['Control', 'Alt', 'Shift', 'Meta'].includes(k)) return
+  if (["Control", "Alt", "Shift", "Meta"].includes(k)) return;
 
-  const keyPart = k.length === 1 ? k.toUpperCase() : k
-  if (parts.length === 0) return // 必须带至少一个修饰键
-  parts.push(keyPart)
-  shortcuts[recordingKey.value] = parts.join('+')
-  recordingKey.value = null
+  const keyPart = k.length === 1 ? k.toUpperCase() : k;
+  if (parts.length === 0) return; // 必须带至少一个修饰键
+  parts.push(keyPart);
+  shortcuts[recordingKey.value] = parts.join("+");
+  recordingKey.value = null;
 }
 
 /** 校验：三个快捷键不可重复，且格式非空 */
 function validateShortcuts(): string | null {
-  const values = ALL_SHORTCUTS.map((k) => shortcuts[k].trim())
-  if (values.some((v) => v === '')) return 'shortcut-empty'
-  const seen = new Set<string>()
+  const values = ALL_SHORTCUTS.map((k) => shortcuts[k].trim());
+  if (values.some((v) => v === "")) return "shortcut-empty";
+  const seen = new Set<string>();
   for (const v of values) {
-    if (seen.has(v)) return 'shortcut-duplicate'
-    seen.add(v)
+    if (seen.has(v)) return "shortcut-duplicate";
+    seen.add(v);
   }
-  return null
+  return null;
 }
 
 // ---- 保存 ----
 async function save() {
-  const err = validateShortcuts()
+  const err = validateShortcuts();
   if (err) {
-    errorMsg.value = err
-    return
+    errorMsg.value = err;
+    return;
   }
-  errorMsg.value = ''
-  saving.value = true
+  errorMsg.value = "";
+  saving.value = true;
   try {
     // 快捷键
-    await invoke('save_shortcuts', {
+    await invoke("save_shortcuts", {
       shortcuts: { ...shortcuts },
-    })
+    });
     // 常规设置
-    await invoke('save_general', {
+    await invoke("save_general", {
       general: {
-        locale: 'zh-CN',
-        theme: 'dark',
+        locale: "zh-CN",
+        theme: "dark",
         preserveDrawings: false,
         lineWidths: { ...lineWidths },
         defaultTool: defaultTool.value,
         defaultColor: defaultColor.value,
         openSettingsOnStartup: openSettingsOnStartup.value,
       },
-    })
+    });
     // 自启动
-    await invoke('set_autostart', { enabled: autostart.value })
-    savedToast.value = true
-    setTimeout(() => (savedToast.value = false), 1600)
+    await invoke("set_autostart", { enabled: autostart.value });
+    savedToast.value = true;
+    setTimeout(() => (savedToast.value = false), 1600);
   } catch (e) {
-    errorMsg.value = String(e)
+    errorMsg.value = String(e);
   } finally {
-    saving.value = false
+    saving.value = false;
   }
 }
 
 // ---- 窗口 ----
 function closeWindow() {
-  getCurrentWindow().close()
+  getCurrentWindow().close();
 }
 </script>
 
@@ -166,9 +189,19 @@ function closeWindow() {
     <!-- 头部 -->
     <header class="settings-header">
       <div class="brand-mark" aria-hidden="true"></div>
-      <h1 class="settings-title">{{ t('settings.title') }}</h1>
-      <button class="icon-btn close-btn" :title="t('settings.close')" @click="closeWindow">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+      <h1 class="settings-title">{{ t("settings.title") }}</h1>
+      <button
+        class="icon-btn close-btn"
+        :title="t('settings.close')"
+        @click="closeWindow"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+        >
           <path d="M6 6 L18 18 M18 6 L6 18" />
         </svg>
       </button>
@@ -177,7 +210,7 @@ function closeWindow() {
     <main v-if="!loading" class="settings-body">
       <!-- 全局快捷键 -->
       <section class="section double-bezel">
-        <h2 class="section-title">{{ t('settings.shortcuts') }}</h2>
+        <h2 class="section-title">{{ t("settings.shortcuts") }}</h2>
         <div
           v-for="item in SHORTCUT_KEYS"
           :key="item.key"
@@ -187,19 +220,19 @@ function closeWindow() {
         >
           <span class="shortcut-label">{{ item.label }}</span>
           <span class="shortcut-value font-mono">
-            {{ recordingKey === item.key ? '…' : shortcuts[item.key] }}
+            {{ recordingKey === item.key ? "…" : shortcuts[item.key] }}
           </span>
           <span v-if="recordingKey === item.key" class="recording-dot"></span>
         </div>
-        <p class="section-hint">{{ t('settings.recordHint') }}</p>
+        <p class="section-hint">{{ t("settings.recordHint") }}</p>
       </section>
 
       <!-- 自启动 -->
       <section class="section double-bezel">
         <div class="switch-row">
           <div>
-            <h2 class="section-title mb0">{{ t('settings.autostart') }}</h2>
-            <p class="section-hint mb0">{{ t('settings.autostartDesc') }}</p>
+            <h2 class="section-title mb0">{{ t("settings.autostart") }}</h2>
+            <p class="section-hint mb0">{{ t("settings.autostartDesc") }}</p>
           </div>
           <button
             class="switch"
@@ -213,7 +246,9 @@ function closeWindow() {
         </div>
         <div class="switch-row">
           <div>
-            <h2 class="section-title mb0">{{ t('settings.openSettingsOnStartup') }}</h2>
+            <h2 class="section-title mb0">
+              {{ t("settings.openSettingsOnStartup") }}
+            </h2>
           </div>
           <button
             class="switch"
@@ -229,7 +264,7 @@ function closeWindow() {
 
       <!-- 画笔工具 -->
       <section class="section double-bezel">
-        <h2 class="section-title">{{ t('settings.defaultTool') }}</h2>
+        <h2 class="section-title">{{ t("settings.defaultTool") }}</h2>
         <div class="tool-row">
           <button
             v-for="def in TOOL_DEFS"
@@ -242,7 +277,7 @@ function closeWindow() {
           </button>
         </div>
 
-        <h2 class="section-title">{{ t('settings.defaultColor') }}</h2>
+        <h2 class="section-title">{{ t("settings.defaultColor") }}</h2>
         <div class="color-row">
           <button
             v-for="c in COLOR_PALETTE"
@@ -255,19 +290,37 @@ function closeWindow() {
           />
         </div>
 
-        <h2 class="section-title">{{ t('settings.lineWidths') }}</h2>
+        <h2 class="section-title">{{ t("settings.lineWidths") }}</h2>
         <div class="width-row">
           <label class="width-field">
-            <span class="width-label">{{ t('tool.pen') }}</span>
-            <input v-model.number="lineWidths.stroke" type="number" min="1" max="40" class="width-input" />
+            <span class="width-label">{{ t("tool.pen") }}</span>
+            <input
+              v-model.number="lineWidths.stroke"
+              type="number"
+              min="1"
+              max="40"
+              class="width-input"
+            />
           </label>
           <label class="width-field">
-            <span class="width-label">{{ t('tool.highlighter') }}</span>
-            <input v-model.number="lineWidths.highlighter" type="number" min="1" max="80" class="width-input" />
+            <span class="width-label">{{ t("tool.highlighter") }}</span>
+            <input
+              v-model.number="lineWidths.highlighter"
+              type="number"
+              min="1"
+              max="80"
+              class="width-input"
+            />
           </label>
           <label class="width-field">
-            <span class="width-label">{{ t('tool.eraser') }}</span>
-            <input v-model.number="lineWidths.eraser" type="number" min="1" max="120" class="width-input" />
+            <span class="width-label">{{ t("tool.eraser") }}</span>
+            <input
+              v-model.number="lineWidths.eraser"
+              type="number"
+              min="1"
+              max="120"
+              class="width-input"
+            />
           </label>
         </div>
       </section>
@@ -284,14 +337,21 @@ function closeWindow() {
     <footer class="settings-footer">
       <Transition name="fade">
         <span v-if="savedToast" class="saved-tag">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M4 12 L10 18 L20 6" />
           </svg>
-          {{ t('settings.saved') }}
+          {{ t("settings.saved") }}
         </span>
       </Transition>
       <button class="primary-btn" :disabled="saving || loading" @click="save">
-        {{ saving ? '…' : t('settings.save') }}
+        {{ saving ? "…" : t("settings.save") }}
       </button>
     </footer>
   </div>
@@ -303,7 +363,11 @@ function closeWindow() {
   flex-direction: column;
   height: 100vh;
   background:
-    radial-gradient(120% 80% at 50% -20%, rgba(108, 140, 255, 0.10), transparent 60%),
+    radial-gradient(
+      120% 80% at 50% -20%,
+      rgba(108, 140, 255, 0.1),
+      transparent 60%
+    ),
     var(--bg-base);
   overflow: hidden;
 }
@@ -343,7 +407,9 @@ function closeWindow() {
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: color var(--duration-hover) var(--ease-default), background var(--duration-hover) var(--ease-default);
+  transition:
+    color var(--duration-hover) var(--ease-default),
+    background var(--duration-hover) var(--ease-default);
 }
 .icon-btn:hover {
   color: var(--text-secondary);
@@ -409,7 +475,9 @@ function closeWindow() {
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--text-primary) 3%, transparent);
   cursor: pointer;
-  transition: border-color var(--duration-hover) var(--ease-default), background var(--duration-hover) var(--ease-default);
+  transition:
+    border-color var(--duration-hover) var(--ease-default),
+    background var(--duration-hover) var(--ease-default);
 }
 .shortcut-row:hover {
   border-color: var(--border);
@@ -441,8 +509,13 @@ function closeWindow() {
   animation: pulse 1s var(--ease-default) infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }
 .font-mono {
   font-family: var(--font-mono);
@@ -464,7 +537,9 @@ function closeWindow() {
   background: var(--surface-2);
   cursor: pointer;
   padding: 0;
-  transition: background var(--duration-hover) var(--ease-default), border-color var(--duration-hover) var(--ease-default);
+  transition:
+    background var(--duration-hover) var(--ease-default),
+    border-color var(--duration-hover) var(--ease-default);
   flex-shrink: 0;
 }
 .switch.on {
@@ -526,7 +601,9 @@ function closeWindow() {
   border: 2px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
   padding: 0;
-  transition: transform var(--duration-spring) var(--ease-spring), border-color var(--duration-hover) var(--ease-default);
+  transition:
+    transform var(--duration-spring) var(--ease-spring),
+    border-color var(--duration-hover) var(--ease-default);
 }
 .swatch:hover {
   transform: scale(1.15);
@@ -609,7 +686,10 @@ function closeWindow() {
   letter-spacing: 0.02em;
   cursor: pointer;
   box-shadow: var(--shadow-accent);
-  transition: transform var(--duration-spring) var(--ease-spring), filter var(--duration-hover) var(--ease-default), opacity var(--duration-hover) var(--ease-default);
+  transition:
+    transform var(--duration-spring) var(--ease-spring),
+    filter var(--duration-hover) var(--ease-default),
+    opacity var(--duration-hover) var(--ease-default);
 }
 .primary-btn:hover:not(:disabled) {
   transform: translateY(-1px);
