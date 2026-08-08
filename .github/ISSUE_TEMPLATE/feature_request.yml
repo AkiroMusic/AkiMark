@@ -1,0 +1,27 @@
+name: Feature Request / 功能建议
+description: Suggest an idea for AkiMark / 为 AkiMark 提出建议
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your idea! / 感谢你的建议！
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 痛点
+      description: What problem does this solve? / 这个功能解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution / 方案描述
+      description: How should it work? / 它应该如何工作？
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 替代方案
+      description: Any workarounds you currently use? / 目前是否有变通方法？

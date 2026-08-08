@@ -1,0 +1,53 @@
+name: Bug Report / Bug 报告
+description: Report a bug in AkiMark / 报告 AkiMark 的缺陷
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report! / 感谢你花时间反馈问题！
+  - type: input
+    id: version
+    attributes:
+      label: Version / 版本号
+      description: Which version are you using? (e.g. v0.1.0) / 你使用的是哪个版本？
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS / 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - Other / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: describe
+    attributes:
+      label: Describe the bug / 问题描述
+      description: What happened? What did you expect? / 发生了什么？你期望什么结果？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: Paste any relevant console / devtools output. / 粘贴相关的控制台或开发者工具输出。
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / 截图
+      description: If applicable, add screenshots. / 如有，请附上截图。
