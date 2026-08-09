@@ -22,6 +22,21 @@ const toast = ref<{ text: string; ts: number } | null>(null);
 const cursorPos = ref({ x: 0, y: 0 });
 const cursorVisible = ref(false);
 
+/**
+ * 光标渲染偏移：让 SVG 中"起作用的位置"对准鼠标。
+ * - pen：笔尖在 viewBox 左下角 (约 3.5, 20.5) → 左移 3.5px、上移 20.5px
+ * - highlighter / eraser：图形居中 → 左移/上移 12px
+ */
+const CURSOR_OFFSET: Record<string, [number, number]> = {
+  pen: [-3.5, -20.5],
+  highlighter: [-12, -12],
+  eraser: [-12, -12],
+};
+function cursorTransform(): string {
+  const [dx, dy] = CURSOR_OFFSET[drawing.currentTool.value] ?? [-12, -12];
+  return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
+}
+
 const drawing = useDrawing(
   {
     history: historyCanvas,
@@ -323,11 +338,10 @@ onBeforeUnmount(() => {
       class="custom-cursor"
       :class="`cursor-${drawing.currentTool.value}`"
       :style="{
-        transform: `translate(${cursorPos.x}px, ${cursorPos.y}px)`,
+        transform: cursorTransform(),
         color: drawing.currentColor.value,
       }"
-    >
-      <svg
+    >      <svg
         viewBox="0 0 24 24"
         class="cursor-svg"
         fill="none"
@@ -338,7 +352,9 @@ onBeforeUnmount(() => {
       >
         <!-- 笔尖 -->
         <template v-if="drawing.currentTool.value === 'pen'">
-          <path d="M12 2 L19 20 L12 16 L5 20 Z" />
+          <!-- 斜 45° 的钢笔：笔尖朝左下，更像写字 -->
+          <path d="M18.5 2.5 L21.5 5.5 L7.5 19.5 L3.5 20.5 L4.5 16.5 Z" />
+          <path d="M15.5 5.5 L18.5 8.5 L7.5 19.5 L4.5 20.5 L5.5 17.5 Z" fill="currentColor" stroke="none" opacity="0.35" />
         </template>
         <!-- 荧光笔 -->
         <template v-else-if="drawing.currentTool.value === 'highlighter'">
@@ -379,8 +395,6 @@ onBeforeUnmount(() => {
   left: 0;
   width: 24px;
   height: 24px;
-  margin-left: 2px;
-  margin-top: 2px;
   pointer-events: none;
   z-index: var(--toolbar-z);
   filter: drop-shadow(0 1px 2px rgba(4, 6, 12, 0.6));

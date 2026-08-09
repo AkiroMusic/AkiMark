@@ -151,10 +151,14 @@ async function save() {
   errorMsg.value = "";
   saving.value = true;
   try {
-    // 快捷键
-    await invoke("save_shortcuts", {
+    // 快捷键：返回被占用的快捷键列表
+    const conflicts = await invoke<string[]>("save_shortcuts", {
       shortcuts: { ...shortcuts },
     });
+    if (conflicts.length > 0) {
+      const detail = conflicts.join(" / ");
+      errorMsg.value = `${t("settings.shortcutConflict")}: ${detail}`;
+    }
     // 常规设置
     await invoke("save_general", {
       general: {

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::config::{self, AppConfig, GeneralConfig, LineWidthsConfig, Shortcuts};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::overlay::{self, AppState, OVERLAY_LABEL};
 use crate::shortcuts;
 
@@ -41,7 +41,10 @@ pub fn save_line_widths(
 }
 
 #[tauri::command]
-pub fn save_shortcuts(app: AppHandle, shortcuts: Shortcuts) -> AppResult<()> {
+pub fn save_shortcuts(
+    app: AppHandle,
+    shortcuts: Shortcuts,
+) -> Result<Vec<String>, AppError> {
     shortcuts::save_shortcuts(&app, shortcuts)
 }
 
