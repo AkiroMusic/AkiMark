@@ -341,7 +341,8 @@ onBeforeUnmount(() => {
         transform: cursorTransform(),
         color: drawing.currentColor.value,
       }"
-    >      <svg
+    >
+      <svg
         viewBox="0 0 24 24"
         class="cursor-svg"
         fill="none"
@@ -354,7 +355,12 @@ onBeforeUnmount(() => {
         <template v-if="drawing.currentTool.value === 'pen'">
           <!-- 斜 45° 的钢笔：笔尖朝左下，更像写字 -->
           <path d="M18.5 2.5 L21.5 5.5 L7.5 19.5 L3.5 20.5 L4.5 16.5 Z" />
-          <path d="M15.5 5.5 L18.5 8.5 L7.5 19.5 L4.5 20.5 L5.5 17.5 Z" fill="currentColor" stroke="none" opacity="0.35" />
+          <path
+            d="M15.5 5.5 L18.5 8.5 L7.5 19.5 L4.5 20.5 L5.5 17.5 Z"
+            fill="currentColor"
+            stroke="none"
+            opacity="0.35"
+          />
         </template>
         <!-- 荧光笔 -->
         <template v-else-if="drawing.currentTool.value === 'highlighter'">
