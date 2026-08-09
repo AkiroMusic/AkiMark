@@ -22,6 +22,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
 - 🪟 **System tray resident** — Zero-drama background presence; single-instance guard.
 - ⚙️ **Settings window** — Configure global shortcuts, launch-at-startup, default tool/color/line width.
+- 🚦 **Shortcut conflict detection** — Saving a hotkey already taken by another app shows an inline warning and keeps the previous binding.
+- ✏️ **Pen-styled cursor** — A 45° pen-tip cursor that feels like writing.
 - 🌐 **i18n** — English / 简体中文.
 
 ---
@@ -37,6 +39,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | `Ctrl+Shift+X` | Toggle click-through |
 
 *Configurable in the settings window.*
+
+> 🚦 If a hotkey is already taken by another app, the settings window shows an inline warning and keeps the previous binding.
 
 ### In-overlay shortcuts
 
@@ -185,6 +189,8 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
 - 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
 - ⚙️ **设置窗口** — 配置全局快捷键、开机自启、默认工具 / 颜色 / 线宽。
+- 🚦 **快捷键占用检测** — 保存被其他程序占用的快捷键时，内联提示冲突并保留原绑定。
+- ✏️ **笔尖光标** — 45° 倾斜的笔尖光标，更接近真实书写的手感。
 - 🌐 **i18n** — 英文 / 简体中文。
 
 ---
@@ -200,6 +206,8 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | `Ctrl+Shift+X` | 切换穿透模式 |
 
 *可在设置窗口中修改。*
+
+> 🚦 若快捷键已被其他程序占用，设置窗口会提示冲突并保留原绑定。
 
 ### 标注界面内快捷键
 

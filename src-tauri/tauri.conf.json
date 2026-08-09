@@ -23,17 +23,6 @@
         "visible": false,
         "width": 800,
         "height": 600
-      },
-      {
-        "label": "settings",
-        "title": "AkiMark 设置",
-        "width": 460,
-        "height": 640,
-        "resizable": false,
-        "maximizable": false,
-        "minimizable": true,
-        "visible": false,
-        "center": true
       }
     ],
     "security": {
@@ -42,7 +31,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -53,7 +44,10 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       }
     }
   }

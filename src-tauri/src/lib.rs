@@ -25,7 +25,7 @@ pub fn open_settings(app: &AppHandle) {
         let _ = win.set_focus();
         return;
     }
-    let Ok(win) = WebviewWindowBuilder::new(app, SETTINGS_LABEL, tauri::WebviewUrl::App(
+    let win = match WebviewWindowBuilder::new(app, SETTINGS_LABEL, tauri::WebviewUrl::App(
         "settings.html".into(),
     ))
     .title("AkiMark 设置")
@@ -34,9 +34,12 @@ pub fn open_settings(app: &AppHandle) {
     .maximizable(false)
     .center()
     .build()
-    else {
-        eprintln!("[akimark] 创建设置窗口失败");
-        return;
+    {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("[akimark] 创建设置窗口失败: {e}");
+            return;
+        }
     };
     let _ = win.show();
     let _ = win.set_focus();
