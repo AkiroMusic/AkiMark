@@ -6,7 +6,7 @@ use crate::error::{AppError, AppResult};
 use crate::overlay::{self, AppState};
 
 /// 注册全部全局快捷键（先注销再注册，支持配置变更）。
-/// 单个热键被系统占用时不中断启动，仅打印警告。
+/// 单个热键被系统占用时不中断启动，收集冲突并广播给前端（设置窗口显示）。
 pub fn register_shortcuts(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
     let config = state.config.lock().unwrap().clone();
@@ -15,17 +15,40 @@ pub fn register_shortcuts(app: &AppHandle) -> AppResult<()> {
     // 先注销所有已注册的
     let _ = app.global_shortcut().unregister_all();
 
-    register_one(app, &shortcuts.toggle_drawing, |app, state| {
+    let mut conflicts: Vec<String> = Vec::new();
+    if !register_one(app, &shortcuts.toggle_drawing, |app, state| {
         overlay::toggle_drawing(app, state)
-    });
-    register_one(app, &shortcuts.clear_drawing, |app, _state| {
+    }) {
+        conflicts.push(shortcuts.toggle_drawing.clone());
+    }
+    if !register_one(app, &shortcuts.clear_drawing, |app, _state| {
         let _ = app.emit("clear-drawing", true);
-    });
-    register_one(app, &shortcuts.toggle_penetration, |app, state| {
+    }) {
+        conflicts.push(shortcuts.clear_drawing.clone());
+    }
+    if !register_one(app, &shortcuts.toggle_penetration, |app, state| {
         overlay::toggle_penetration_mode(app, state)
-    });
+    }) {
+        conflicts.push(shortcuts.toggle_penetration.clone());
+    }
+
+    if !conflicts.is_empty() {
+        // 记录冲突状态（供 get_shortcut_conflicts 查询）
+        *state.shortcut_conflicts.lock().unwrap() = conflicts.clone();
+        // 广播冲突给前端（设置窗口 / 覆盖层均可监听）
+        let _ = app.emit("shortcut-conflict", conflicts.clone());
+    } else {
+        state.shortcut_conflicts.lock().unwrap().clear();
+    }
 
     Ok(())
+}
+
+/// 查询当前注册失败的全局快捷键（被其他程序占用）。
+pub fn get_shortcut_conflicts(app: &AppHandle) -> Vec<String> {
+    let state = app.state::<AppState>();
+    let conflicts = state.shortcut_conflicts.lock().unwrap().clone();
+    conflicts
 }
 
 /// 注册单个快捷键，返回是否成功（用于保存时判断冲突）。
@@ -139,6 +162,12 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
     drop(config);
     crate::config::save_config(app, &config_snapshot)?;
     crate::config::broadcast_config(app, &config_snapshot);
+
+    // 同步冲突状态
+    {
+        let state = app.state::<AppState>();
+        *state.shortcut_conflicts.lock().unwrap() = conflicts.clone();
+    }
 
     Ok(conflicts)
 }

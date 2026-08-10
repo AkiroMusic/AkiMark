@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppConfig, Shortcuts } from "./configTypes";
 import { COLOR_PALETTE, DEFAULT_COLOR } from "./constants/colors";
 import { TOOL_DEFS } from "./constants/tools";
@@ -27,6 +26,8 @@ const loading = ref(true);
 const saving = ref(false);
 const savedToast = ref(false);
 const errorMsg = ref("");
+/** 注册失败的全局快捷键（被其他程序占用） */
+const conflictKeys = ref<string[]>([]);
 
 // 快捷键录制
 const recordingKey = ref<
@@ -48,8 +49,20 @@ const ALL_SHORTCUTS: ShortcutKey[] = [
   "togglePenetration",
 ];
 
+/** 校验错误 key 白名单：errorMsg 属于这些 key 时按 i18n 翻译，否则视为原始错误文本 */
+const ERROR_I18N_KEYS = ["shortcut-empty", "shortcut-duplicate"];
+function isI18nErrorKey(msg: string): boolean {
+  return ERROR_I18N_KEYS.includes(msg);
+}
+
 // ---- 加载 ----
 onMounted(async () => {
+  // 监听快捷键冲突广播（启动时注册失败 / 保存时被占用）
+  const { listen } = await import("@tauri-apps/api/event");
+  listen<string[]>("shortcut-conflict", (e) => {
+    conflictKeys.value = e.payload;
+  }).catch(() => {});
+
   try {
     const cfg = await invoke<AppConfig>("get_config");
     shortcuts.toggleDrawing = cfg.shortcuts.toggleDrawing;
@@ -66,6 +79,13 @@ onMounted(async () => {
       autostart.value = await invoke<boolean>("get_autostart");
     } catch {
       autostart.value = false;
+    }
+
+    // 查询启动时已存在的快捷键冲突（可能早于本窗口打开）
+    try {
+      conflictKeys.value = await invoke<string[]>("get_shortcut_conflicts");
+    } catch {
+      /* 忽略 */
     }
   } catch (e) {
     errorMsg.value = String(e);
@@ -181,11 +201,6 @@ async function save() {
     saving.value = false;
   }
 }
-
-// ---- 窗口 ----
-function closeWindow() {
-  getCurrentWindow().close();
-}
 </script>
 
 <template>
@@ -194,21 +209,6 @@ function closeWindow() {
     <header class="settings-header">
       <div class="brand-mark" aria-hidden="true"></div>
       <h1 class="settings-title">{{ t("settings.title") }}</h1>
-      <button
-        class="icon-btn close-btn"
-        :title="t('settings.close')"
-        @click="closeWindow"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-        >
-          <path d="M6 6 L18 18 M18 6 L6 18" />
-        </svg>
-      </button>
     </header>
 
     <main v-if="!loading" class="settings-body">
@@ -329,10 +329,80 @@ function closeWindow() {
         </div>
       </section>
 
-      <!-- 错误提示 -->
+      <!-- 快捷键冲突横幅：被其他程序占用的全局快捷键 -->
+      <div v-if="conflictKeys.length > 0" class="conflict-banner" role="alert">
+        <span class="conflict-icon" aria-hidden="true">⚠</span>
+        <div class="conflict-body">
+          <p class="conflict-title">
+            {{ t("settings.shortcutConflictBanner") }}
+          </p>
+          <p class="conflict-keys font-mono">{{ conflictKeys.join(" / ") }}</p>
+        </div>
+      </div>
+
+      <!-- 错误提示：errorMsg 为 i18n key 时翻译，为原始错误文本时原样显示 -->
       <p v-if="errorMsg" class="error-text">
-        {{ t(`settings.${errorMsg}`) || errorMsg }}
+        {{ isI18nErrorKey(errorMsg) ? t(`settings.${errorMsg}`) : errorMsg }}
       </p>
+
+      <!-- 快捷键 / 功能一览 -->
+      <section class="section double-bezel">
+        <h2 class="section-title">{{ t("settings.helpTitle") }}</h2>
+
+        <h3 class="help-sub">{{ t("settings.helpGlobal") }}</h3>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+Shift+R</kbd>
+          <span class="help-desc">{{ t("settings.helpGlobalToggle") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+Shift+C</kbd>
+          <span class="help-desc">{{ t("settings.helpGlobalClear") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+Shift+X</kbd>
+          <span class="help-desc">{{ t("settings.helpGlobalPenetrate") }}</span>
+        </div>
+
+        <h3 class="help-sub">{{ t("settings.helpInApp") }}</h3>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">1 / 2 / 3</kbd>
+          <span class="help-desc">{{ t("settings.helpIn1") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Q / E</kbd>
+          <span class="help-desc">{{ t("settings.helpInQE") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Space</kbd>
+          <span class="help-desc">{{ t("settings.helpInSpace") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">X</kbd>
+          <span class="help-desc">{{ t("settings.helpInX") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+C</kbd>
+          <span class="help-desc">{{ t("settings.helpInCtrlC") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+Z / Ctrl+Y</kbd>
+          <span class="help-desc">{{ t("settings.helpInCtrlZY") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Esc</kbd>
+          <span class="help-desc">{{ t("settings.helpInEsc") }}</span>
+        </div>
+
+        <h3 class="help-sub">{{ t("settings.helpMouse") }}</h3>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpMouseDraw") }}</span>
+        </div>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpMouseErase") }}</span>
+        </div>
+
+        <p class="section-hint">{{ t("settings.helpTip") }}</p>
+      </section>
     </main>
 
     <div v-else class="settings-body loading-box">…</div>
@@ -656,6 +726,77 @@ function closeWindow() {
   color: var(--error);
   margin: 0;
   padding: 0 var(--space-1);
+}
+
+/* ---- 快捷键冲突横幅 ---- */
+.conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--error) 45%, transparent);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+}
+.conflict-icon {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--error);
+  flex-shrink: 0;
+}
+.conflict-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.conflict-title {
+  font-size: 12px;
+  color: var(--error);
+  margin: 0;
+  line-height: 1.5;
+}
+.conflict-keys {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* ---- 快捷键 / 功能一览 ---- */
+.help-sub {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin: var(--space-2) 0 var(--space-1);
+}
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 5px 0;
+}
+.help-kbd {
+  min-width: 92px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+.help-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.help-mouse {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* ---- 底部 ---- */

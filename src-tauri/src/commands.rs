@@ -48,6 +48,12 @@ pub fn save_shortcuts(
     shortcuts::save_shortcuts(&app, shortcuts)
 }
 
+/// 查询当前注册失败的全局快捷键（被其他程序占用）。
+#[tauri::command]
+pub fn get_shortcut_conflicts(app: AppHandle) -> Vec<String> {
+    shortcuts::get_shortcut_conflicts(&app)
+}
+
 #[tauri::command]
 pub fn save_locale(app: AppHandle, state: State<'_, AppState>, locale: String) -> AppResult<()> {
     let mut config = state.config.lock().unwrap();
