@@ -82,6 +82,7 @@ pub fn run() {
             commands::save_general,
             commands::save_line_widths,
             commands::save_shortcuts,
+            commands::get_shortcut_conflicts,
             commands::save_locale,
             commands::exit_drawing,
             commands::enter_penetration_mode,

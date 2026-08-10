@@ -21,6 +21,8 @@ pub struct AppState {
     pub mode: Mutex<OverlayMode>,
     /// 激活保护：激活后一小段时间内，工具栏抢焦点不触发自动穿透
     pub activation_guard: Arc<AtomicBool>,
+    /// 当前注册失败的全局快捷键（被其他程序占用）
+    pub shortcut_conflicts: Mutex<Vec<String>>,
 }
 
 impl AppState {
@@ -29,6 +31,7 @@ impl AppState {
             config: Mutex::new(config),
             mode: Mutex::new(OverlayMode::Hidden),
             activation_guard: Arc::new(AtomicBool::new(false)),
+            shortcut_conflicts: Mutex::new(Vec::new()),
         }
     }
 }
@@ -134,7 +137,8 @@ pub fn exit_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> Ap
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     window.set_ignore_cursor_events(false)?;
     set_mode(state, OverlayMode::Drawing);
-    let _ = app.emit("overlay-mode-changed", "drawing");
+    // 用独立事件值：前端据此保留已有笔迹（区别于从隐藏激活的 "drawing"）
+    let _ = app.emit("overlay-mode-changed", "drawing-return");
     Ok(())
 }
 

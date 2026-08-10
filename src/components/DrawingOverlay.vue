@@ -222,8 +222,13 @@ async function setupListeners() {
 
   modeListener = await listen<string>("overlay-mode-changed", (e) => {
     const mode = e.payload;
-    if (mode === "drawing") {
-      // 窗口刚显示，重置画布尺寸 & 清空（MVP：每次进入默认清空）
+    if (mode === "drawing-return") {
+      // 从穿透切回绘制：保留已有笔迹，只恢复交互
+      cursorVisible.value = true;
+      showToolbar.value = true;
+      isPenetrating.value = false;
+    } else if (mode === "drawing") {
+      // 正常激活：重置画布尺寸 & 清空（MVP：每次进入默认清空）
       requestAnimationFrame(() => {
         resizeCanvases();
         drawing.hardReset();
