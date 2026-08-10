@@ -46,7 +46,12 @@ const drawing = useDrawing(
 );
 
 /** 应用 config 中的默认工具/颜色/线宽（启动时与 config 变更时） */
+let applyingConfig = false;
+let prefsSaveTimer: number | null = null;
+let prefsSaveInFlight = false;
+
 function applyConfig(cfg: AppConfig) {
+  applyingConfig = true;
   drawing.currentTool.value = cfg.general.defaultTool;
   drawing.currentColor.value = cfg.general.defaultColor;
   drawing.lineWidths.value = {
@@ -54,6 +59,48 @@ function applyConfig(cfg: AppConfig) {
     highlighter: cfg.general.lineWidths.highlighter,
     eraser: cfg.general.lineWidths.eraser,
   };
+  // watcher 是微任务，等它跑完再复位，避免把"应用配置"误判为用户改动触发回存
+  setTimeout(() => {
+    applyingConfig = false;
+  }, 0);
+}
+
+/** 绘制预设防抖保存：用户改工具/颜色/线宽后 500ms 内无新改动才落盘 */
+function schedulePrefsSave() {
+  if (prefsSaveTimer) window.clearTimeout(prefsSaveTimer);
+  prefsSaveTimer = window.setTimeout(() => {
+    prefsSaveTimer = null;
+    void persistDrawingPrefs();
+  }, 500);
+}
+
+/** 立即保存当前绘制预设（退出标注时兜底） */
+function flushPrefsSave() {
+  if (prefsSaveTimer) {
+    window.clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = null;
+  }
+  void persistDrawingPrefs();
+}
+
+async function persistDrawingPrefs() {
+  if (prefsSaveInFlight) return;
+  prefsSaveInFlight = true;
+  try {
+    await invoke("save_drawing_prefs", {
+      tool: drawing.currentTool.value,
+      color: drawing.currentColor.value,
+      lineWidths: {
+        stroke: drawing.lineWidths.value.stroke,
+        highlighter: drawing.lineWidths.value.highlighter,
+        eraser: drawing.lineWidths.value.eraser,
+      },
+    });
+  } catch {
+    /* 非 Tauri 环境忽略 */
+  } finally {
+    prefsSaveInFlight = false;
+  }
 }
 
 let pointerDown = false;
@@ -244,6 +291,8 @@ async function setupListeners() {
       showToolbar.value = false;
       isPenetrating.value = false;
       drawing.hardReset();
+      // 退出标注时兜底落盘绘制预设
+      flushPrefsSave();
     }
   });
 }
@@ -280,6 +329,12 @@ onMounted(async () => {
       updateCursorIcon();
     },
   );
+
+  // 工具/颜色/线宽变化 → 防抖保存绘制预设（下次启动沿用）
+  watch([drawing.currentTool, drawing.currentColor, drawing.lineWidths], () => {
+    if (applyingConfig) return;
+    schedulePrefsSave();
+  });
 });
 
 onBeforeUnmount(() => {
@@ -289,6 +344,12 @@ onBeforeUnmount(() => {
   modeListener?.();
   configListener?.();
   drawing.destroy();
+  // 清理防抖保存定时器并兜底落盘
+  if (prefsSaveTimer) {
+    window.clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = null;
+  }
+  void persistDrawingPrefs();
 });
 </script>
 

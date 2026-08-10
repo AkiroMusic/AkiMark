@@ -22,7 +22,8 @@
         "resizable": false,
         "visible": false,
         "width": 800,
-        "height": 600
+        "height": 600,
+        "additionalBrowserArgs": "--disable-gpu-compositing"
       }
     ],
     "security": {
@@ -31,9 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,10 +43,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": [
-          "SimpChinese",
-          "English"
-        ]
+        "languages": ["SimpChinese", "English"]
       }
     }
   }

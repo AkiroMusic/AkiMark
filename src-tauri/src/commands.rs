@@ -40,6 +40,27 @@ pub fn save_line_widths(
     Ok(())
 }
 
+/// 保存"上次使用的绘制预设"（工具/颜色/线宽），下次启动沿用。
+/// 由 overlay 在用户改动工具/颜色/线宽时（防抖后）调用。
+#[tauri::command]
+pub fn save_drawing_prefs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tool: String,
+    color: String,
+    line_widths: LineWidthsConfig,
+) -> AppResult<()> {
+    let mut config = state.config.lock().unwrap();
+    config.general.default_tool = tool;
+    config.general.default_color = color;
+    config.general.line_widths = line_widths;
+    let config_snapshot = config.clone();
+    drop(config);
+    config::save_config(&app, &config_snapshot)?;
+    config::broadcast_config(&app, &config_snapshot);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn save_shortcuts(
     app: AppHandle,
