@@ -81,6 +81,7 @@ pub fn run() {
             commands::get_config,
             commands::save_general,
             commands::save_line_widths,
+            commands::save_drawing_prefs,
             commands::save_shortcuts,
             commands::get_shortcut_conflicts,
             commands::save_locale,
