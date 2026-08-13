@@ -16,6 +16,17 @@ pub enum AppError {
     Shortcut(#[from] tauri_plugin_global_shortcut::Error),
     #[error(transparent)]
     Autostart(#[from] tauri_plugin_autostart::Error),
+    #[error("截图失败")]
+    CaptureFailed,
+    /// 非 Windows 平台的截屏/导出路径使用（Windows 构建中视为未用）
+    #[allow(dead_code)]
+    #[error("当前平台不支持该功能")]
+    UnsupportedPlatform,
+    #[error("无效的导出数据")]
+    InvalidExportData,
+    /// 导出 payload 超过上限（base64 字符串过大，通常是异常/恶意调用）
+    #[error("导出数据过大（上限 {0} 字节）")]
+    ExportTooLarge(usize),
 }
 
 pub type AppResult<T> = Result<T, AppError>;

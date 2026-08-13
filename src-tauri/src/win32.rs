@@ -4,11 +4,16 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    ClipCursor, GetCursorPos, SetWindowPos, SWP_NOACTIVATE, SWP_SHOWWINDOW, HWND_TOPMOST,
+    ClipCursor, GetCursorPos, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
 };
 
 /// 光标所在显示器的物理像素矩形 (x, y, w, h)
 pub fn get_cursor_monitor_rect() -> Option<(i32, i32, u32, u32)> {
+    get_monitor_rect(get_cursor_monitor()?)
+}
+
+/// 光标所在显示器句柄（HMONITOR）
+pub fn get_cursor_monitor() -> Option<HMONITOR> {
     unsafe {
         let mut pt = POINT { x: 0, y: 0 };
         if GetCursorPos(&mut pt) == 0 {
@@ -18,7 +23,7 @@ pub fn get_cursor_monitor_rect() -> Option<(i32, i32, u32, u32)> {
         if monitor.is_null() {
             return None;
         }
-        get_monitor_rect(monitor)
+        Some(monitor)
     }
 }
 
@@ -30,7 +35,12 @@ fn get_monitor_rect(monitor: HMONITOR) -> Option<(i32, i32, u32, u32)> {
             return None;
         }
         let r = info.rcMonitor;
-        Some((r.left, r.top, (r.right - r.left) as u32, (r.bottom - r.top) as u32))
+        Some((
+            r.left,
+            r.top,
+            (r.right - r.left) as u32,
+            (r.bottom - r.top) as u32,
+        ))
     }
 }
 
