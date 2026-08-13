@@ -123,9 +123,7 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
         // 尝试回退到旧值
         let old = &config.shortcuts.toggle_drawing;
         if old != &shortcuts.toggle_drawing {
-            ok_drawing = register_one(app, old, |app, state| {
-                overlay::toggle_drawing(app, state)
-            });
+            ok_drawing = register_one(app, old, |app, state| overlay::toggle_drawing(app, state));
         }
     }
     if !ok_clear {
@@ -170,4 +168,60 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
     }
 
     Ok(conflicts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_shortcut;
+    use crate::error::AppError;
+
+    #[test]
+    fn valid_shortcuts_pass() {
+        for accel in [
+            "Ctrl+Shift+R",
+            "Ctrl+Alt+C",
+            "Ctrl+Shift+X",
+            "Alt+F4",
+            "F12",
+            "Ctrl+1",
+            "CmdOrCtrl+Shift+P",
+            "Super+L",
+            "Shift+Alt+Insert",
+        ] {
+            assert!(
+                validate_shortcut(accel).is_ok(),
+                "应接受合法快捷键: {accel}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_shortcut_is_allowed() {
+        // 空 = 未绑定，合法（register_one 也按此处理）
+        assert!(validate_shortcut("").is_ok());
+        assert!(validate_shortcut("   ").is_ok());
+    }
+
+    #[test]
+    fn invalid_shortcuts_are_rejected() {
+        for accel in [
+            "Ctrl+",
+            "+R",
+            "Ctrl++Shift",
+            "NOT_A_KEY",
+            "123",
+            "Ctrl Ctrl+R",
+        ] {
+            let err = validate_shortcut(accel).unwrap_err();
+            assert!(
+                matches!(err, AppError::InvalidShortcut(_)),
+                "应拒绝非法快捷键 {accel:?}，得到 {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_parse_rejects_unknown_modifiers() {
+        assert!(validate_shortcut("Hyper+Shift+R").is_err());
+    }
 }

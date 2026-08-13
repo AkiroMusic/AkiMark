@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Emitter, Manager, State};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config::AppConfig;
 use crate::error::AppResult;
@@ -21,6 +21,9 @@ pub struct AppState {
     pub mode: Mutex<OverlayMode>,
     /// 激活保护：激活后一小段时间内，工具栏抢焦点不触发自动穿透
     pub activation_guard: Arc<AtomicBool>,
+    /// 激活保护代际号：每次置位递增，旧置位的延时复位只在自己仍是最新代际时生效，
+    /// 防止 capture_screen(150ms) 与 activate_drawing(600ms) 的复位互相踩踏。
+    pub activation_gen: Arc<AtomicU64>,
     /// 当前注册失败的全局快捷键（被其他程序占用）
     pub shortcut_conflicts: Mutex<Vec<String>>,
 }
@@ -31,7 +34,24 @@ impl AppState {
             config: Mutex::new(config),
             mode: Mutex::new(OverlayMode::Hidden),
             activation_guard: Arc::new(AtomicBool::new(false)),
+            activation_gen: Arc::new(AtomicU64::new(0)),
             shortcut_conflicts: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 置位激活保护，返回本次代际号。
+    /// 复位必须携带该代际号调用 [`Self::disarm_activation_guard`]；
+    /// 若期间已有更新的置位（代际号已增大），旧复位自动失效。
+    pub fn arm_activation_guard(&self) -> u64 {
+        let gen = self.activation_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        self.activation_guard.store(true, Ordering::SeqCst);
+        gen
+    }
+
+    /// 复位激活保护：仅当代际号仍是最新时生效。
+    pub fn disarm_activation_guard(&self, gen: u64) {
+        if self.activation_gen.load(Ordering::SeqCst) == gen {
+            self.activation_guard.store(false, Ordering::SeqCst);
         }
     }
 }
@@ -53,12 +73,15 @@ pub fn activate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResu
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
 
-    // 激活保护窗口：600ms 内忽略失焦自动穿透
-    state.activation_guard.store(true, Ordering::SeqCst);
-    let guard = state.activation_guard.clone();
+    // 激活保护窗口：600ms 内忽略失焦自动穿透。
+    // 用代际计数：若期间 capture_screen 又置位过（代际增大），本次复位自动失效，
+    // 避免 150ms 复位清掉更新的 600ms 激活保护。
+    let gen = state.arm_activation_guard();
+    let app_for_thread = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(600));
-        guard.store(false, Ordering::SeqCst);
+        let state = app_for_thread.state::<AppState>();
+        state.disarm_activation_guard(gen);
     });
 
     // Windows 快速路径：一次性 SetWindowPos 定位 + 置顶

@@ -17,8 +17,8 @@ impl Default for LineWidthsConfig {
     fn default() -> Self {
         Self {
             stroke: 3.0,
-            highlighter: 18.0,
-            eraser: 24.0,
+            highlighter: 10.0,
+            eraser: 12.0,
         }
     }
 }
@@ -50,12 +50,14 @@ pub struct GeneralConfig {
     pub theme: String,
     pub preserve_drawings: bool,
     pub line_widths: LineWidthsConfig,
-    /// 默认画笔工具（pen / highlighter / eraser）
+    /// 默认画笔工具（pen / highlighter / eraser / …）
     pub default_tool: String,
     /// 默认笔色（hex）
     pub default_color: String,
     /// 是否在启动时打开设置窗口（托盘常驻，设置用完即毁）
     pub open_settings_on_startup: bool,
+    /// 导出目录；None = 系统图片目录
+    pub export_dir: Option<String>,
 }
 
 impl Default for GeneralConfig {
@@ -68,6 +70,7 @@ impl Default for GeneralConfig {
             default_tool: "pen".into(),
             default_color: "#6C8CFF".into(),
             open_settings_on_startup: true,
+            export_dir: None,
         }
     }
 }
@@ -124,4 +127,93 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> AppResult<()> 
 /// 广播配置变更给所有窗口
 pub fn broadcast_config(app: &tauri::AppHandle, config: &AppConfig) {
     let _ = app.emit("config-changed", config.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_sane() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Shift+R");
+        assert_eq!(cfg.shortcuts.clear_drawing, "Ctrl+Shift+C");
+        assert_eq!(cfg.shortcuts.toggle_penetration, "Ctrl+Shift+X");
+        assert_eq!(cfg.general.default_tool, "pen");
+        assert_eq!(cfg.general.default_color, "#6C8CFF");
+        assert_eq!(cfg.general.line_widths.stroke, 3.0);
+        assert_eq!(cfg.general.line_widths.highlighter, 10.0);
+        assert_eq!(cfg.general.line_widths.eraser, 12.0);
+        assert!(cfg.general.open_settings_on_startup);
+        assert_eq!(cfg.general.export_dir, None);
+    }
+
+    #[test]
+    fn serde_roundtrip_keeps_values() {
+        let cfg = AppConfig {
+            shortcuts: Shortcuts {
+                toggle_drawing: "Ctrl+Alt+A".into(),
+                clear_drawing: "Ctrl+Alt+C".into(),
+                toggle_penetration: "Ctrl+Alt+X".into(),
+            },
+            general: GeneralConfig {
+                default_tool: "highlighter".into(),
+                default_color: "#F0A0D8".into(),
+                line_widths: LineWidthsConfig {
+                    stroke: 5.0,
+                    highlighter: 22.0,
+                    eraser: 30.0,
+                },
+                export_dir: Some("D:/Screenshots".into()),
+                ..GeneralConfig::default()
+            },
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn serde_uses_camel_case_field_names() {
+        // 前端契约：camelCase。若字段名回归 snake_case，此测试将失败。
+        let cfg = AppConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains("\"toggleDrawing\""),
+            "缺少 toggleDrawing: {json}"
+        );
+        assert!(json.contains("\"defaultTool\""), "缺少 defaultTool: {json}");
+        assert!(
+            json.contains("\"openSettingsOnStartup\""),
+            "缺少 openSettingsOnStartup: {json}"
+        );
+        assert!(
+            !json.contains("\"toggle_drawing\""),
+            "出现了 snake_case 字段名: {json}"
+        );
+    }
+
+    #[test]
+    fn malformed_json_falls_back_to_defaults() {
+        // load_config 需要 AppHandle，这里只验证解析层容错逻辑可复用
+        let bad = r#"{ not valid json "#;
+        assert!(serde_json::from_str::<AppConfig>(bad).is_err());
+        // 缺字段的 JSON → 报错（不会静默产生半初始化配置）
+        let partial = r#"{"general":{"locale":"en"}}"#;
+        assert!(serde_json::from_str::<AppConfig>(partial).is_err());
+    }
+
+    #[test]
+    fn partial_update_preserves_other_fields() {
+        // 前端 save_general 只传 GeneralConfig，验证结构体语义：直接赋值整个字段
+        let mut cfg = AppConfig::default();
+        cfg.general = GeneralConfig {
+            locale: "en".into(),
+            ..GeneralConfig::default()
+        };
+        // shortcuts 应不受影响
+        assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Shift+R");
+        assert_eq!(cfg.general.locale, "en");
+        assert_eq!(cfg.general.default_tool, "pen");
+    }
 }
