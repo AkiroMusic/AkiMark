@@ -17,9 +17,18 @@ export interface GeneralConfig {
   theme: string;
   preserveDrawings: boolean;
   lineWidths: LineWidthsConfig;
-  defaultTool: "pen" | "highlighter" | "eraser";
+  defaultTool:
+    | "pen"
+    | "highlighter"
+    | "eraser"
+    | "line"
+    | "rect"
+    | "circle"
+    | "arrow"
+    | "text";
   defaultColor: string;
   openSettingsOnStartup: boolean;
+  exportDir: string | null;
 }
 
 export interface AppConfig {
