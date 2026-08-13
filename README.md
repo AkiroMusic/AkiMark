@@ -14,14 +14,18 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 - ⚡ **Instant activation** — Pre-built hidden overlay window; a single global hotkey shows it in milliseconds.
 - 🪟 **Full-screen drawing overlay** — Transparent, always-on-top, skips taskbar.
-- 🖌️ **Three tools** — Pen, highlighter, eraser.
+- 🖌️ **Eight tools** — Pen, highlighter, eraser, line, rectangle, circle, arrow, text.
 - 🎨 **8-color palette** — Quick color cycling with Q/E.
-- 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events.
+- 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
+- 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`).
+- 🔎 **Magnifier** — ZoomIt-style 2x/4x screen magnifier (press `M`).
+- 📸 **Export screenshot** — Composite annotations onto the underlying screen and save as PNG (press `S` or the toolbar button; custom export folder).
 - ↩️ **Undo / Redo / Clear** — Full history stack.
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
 - 🪟 **System tray resident** — Zero-drama background presence; single-instance guard.
-- ⚙️ **Settings window** — Configure global shortcuts, launch-at-startup, default tool/color/line width.
+- ⚙️ **Settings window** — Configure global shortcuts, launch-at-startup, default tool/color/line width, export folder.
+- 📁 **Custom export folder** — Choose where exported PNG screenshots go (defaults to Pictures).
 - 🚦 **Shortcut conflict detection** — Saving a hotkey already taken by another app shows an inline warning and keeps the previous binding.
 - ✏️ **Pen-styled cursor** — A 45° pen-tip cursor that feels like writing.
 - 🌐 **i18n** — English / 简体中文.
@@ -47,7 +51,12 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | Shortcut | Action |
 |---|---|
 | `1` / `2` / `3` | Pen / Highlighter / Eraser |
+| `4` / `5` / `6` | Line / Rectangle / Circle |
+| `7` / `8` | Arrow / Text |
 | `Q` / `E` | Cycle color |
+| `F` | Toggle spotlight |
+| `M` | Toggle magnifier (2x / 4x) |
+| `S` | Export screenshot as PNG |
 | `Space` | Toggle toolbar |
 | `X` | Toggle click-through |
 | `Ctrl+C` | Clear |
@@ -132,10 +141,11 @@ Settings are persisted as JSON in the OS app-config directory (`%APPDATA%\com.ak
     "locale": "zh-CN",
     "theme": "dark",
     "preserveDrawings": false,
-    "lineWidths": { "stroke": 3, "highlighter": 18, "eraser": 24 },
+    "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
     "defaultColor": "#6C8CFF",
-    "openSettingsOnStartup": true
+    "openSettingsOnStartup": true,
+    "exportDir": null
   }
 }
 ```
@@ -181,14 +191,18 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 - ⚡ **即时激活** — 预建隐藏覆盖窗口，按一次全局热键即可毫秒级显示。
 - 🪟 **全屏绘制覆盖层** — 透明、置顶、不占任务栏。
-- 🖌️ **三种工具** — 画笔、荧光笔、橡皮。
+- 🖌️ **八种工具** — 画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字。
 - 🎨 **8 色调色板** — 用 Q/E 快速循环切换颜色。
-- 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。
+- 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
+- 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`）。
+- 🔎 **放大镜** — ZoomIt 式 2x / 4x 屏幕放大镜（按 `M`）。
+- 📸 **导出截图** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录）。
 - ↩️ **撤销 / 重做 / 清屏** — 完整的历史操作栈。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
 - 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
-- ⚙️ **设置窗口** — 配置全局快捷键、开机自启、默认工具 / 颜色 / 线宽。
+- ⚙️ **设置窗口** — 配置全局快捷键、开机自启、默认工具 / 颜色 / 线宽、导出目录。
+- 📁 **自定义导出目录** — 可自由选择截图导出的保存位置（默认系统图片目录）。
 - 🚦 **快捷键占用检测** — 保存被其他程序占用的快捷键时，内联提示冲突并保留原绑定。
 - ✏️ **笔尖光标** — 45° 倾斜的笔尖光标，更接近真实书写的手感。
 - 🌐 **i18n** — 英文 / 简体中文。
@@ -214,7 +228,12 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | 快捷键 | 操作 |
 |---|---|
 | `1` / `2` / `3` | 画笔 / 荧光笔 / 橡皮 |
+| `4` / `5` / `6` | 直线 / 矩形 / 圆形 |
+| `7` / `8` | 箭头 / 文字 |
 | `Q` / `E` | 循环切换颜色 |
+| `F` | 开关聚光灯 |
+| `M` | 开关放大镜（2x / 4x） |
+| `S` | 导出截图 PNG |
 | `Space` | 显示 / 隐藏工具栏 |
 | `X` | 切换穿透 |
 | `Ctrl+C` | 清屏 |
@@ -299,10 +318,11 @@ npm run icon         # 从 assets/icon-1024.png 生成
     "locale": "zh-CN",
     "theme": "dark",
     "preserveDrawings": false,
-    "lineWidths": { "stroke": 3, "highlighter": 18, "eraser": 24 },
+    "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
     "defaultColor": "#6C8CFF",
-    "openSettingsOnStartup": true
+    "openSettingsOnStartup": true,
+    "exportDir": null
   }
 }
 ```
