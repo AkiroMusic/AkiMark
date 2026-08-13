@@ -5,16 +5,12 @@ import {
   ERASER_OPACITY,
   HIGHLIGHTER_OPACITY,
   PEN_OPACITY,
+  SHAPE_TOOLS,
+  TEXT_FONT_SIZE,
+  TOOL_WIDTH_GROUP,
   WIDTH_SCALE,
 } from "../constants/tools";
 import { DEFAULT_COLOR } from "../constants/colors";
-
-/** 画布引用映射：工具名 → 线宽配置键 */
-const TOOL_WIDTH_KEY: Record<Tool, keyof LineWidths> = {
-  pen: "stroke",
-  highlighter: "highlighter",
-  eraser: "eraser",
-};
 
 /** 最大画布像素（防超大显示器 OOM） */
 const MAX_CANVAS_PIXELS = 6_000_000;
@@ -27,6 +23,12 @@ interface UndoEntry {
 interface CanvasRefs {
   history: Ref<HTMLCanvasElement | null>;
   preview: Ref<HTMLCanvasElement | null>;
+}
+
+/** 压力映射：0..1 → 0.4x..2.0x（数位板轻笔细、重笔粗；鼠标无压感恒 1x） */
+function pressureScale(p?: number): number {
+  if (p === undefined || p <= 0) return 1;
+  return 0.4 + p * 1.6;
 }
 
 /**
@@ -44,8 +46,8 @@ export function useDrawing(
   const currentColor = ref(initial.color ?? DEFAULT_COLOR);
   const lineWidths = ref<LineWidths>({
     stroke: initial.lineWidths?.stroke ?? 3,
-    highlighter: initial.lineWidths?.highlighter ?? 18,
-    eraser: initial.lineWidths?.eraser ?? 24,
+    highlighter: initial.lineWidths?.highlighter ?? 10,
+    eraser: initial.lineWidths?.eraser ?? 12,
   });
   const isDrawing = ref(false);
 
@@ -72,7 +74,7 @@ export function useDrawing(
 
   // 当前工具线宽（随工具切换）
   const lineWidth = computed(() => {
-    const w = lineWidths.value[TOOL_WIDTH_KEY[currentTool.value]];
+    const w = lineWidths.value[TOOL_WIDTH_GROUP[currentTool.value]];
     return w * WIDTH_SCALE[currentTool.value];
   });
 
@@ -124,13 +126,23 @@ export function useDrawing(
   /** 点坐标换算到 CSS 像素 */
   function toCssPoint(e: PointerEvent | MouseEvent): Point {
     const rect = refs.preview.value?.getBoundingClientRect();
-    return {
+    const p = {
       x: e.clientX - (rect?.left ?? 0),
       y: e.clientY - (rect?.top ?? 0),
-    };
+    } as Point;
+    // 数位板压感：仅 pen 指针类型参与调制（鼠标 pressure 恒 0.5 排除，笔压到 0.5 不被误排除）
+    const pe = e as PointerEvent;
+    if (
+      pe.pointerType === "pen" &&
+      typeof pe.pressure === "number" &&
+      pe.pressure > 0
+    ) {
+      p.pressure = pe.pressure;
+    }
+    return p;
   }
 
-  /** 二次贝塞尔中点平滑绘制一段 */
+  /** 二次贝塞尔中点平滑绘制一段（荧光笔/橡皮：固定宽度） */
   function drawSmoothSegment(
     ctx: CanvasRenderingContext2D,
     points: Point[],
@@ -162,20 +174,161 @@ export function useDrawing(
     ctx.restore();
   }
 
-  function drawAction(ctx: CanvasRenderingContext2D, action: DrawAction) {
-    if (action.tool === "eraser") {
-      ctx.save();
-      ctx.globalCompositeOperation = "destination-out";
-      drawSmoothSegment(ctx, action.points, "#000", action.lineWidth, 1);
-      ctx.restore();
-    } else {
-      drawSmoothSegment(
-        ctx,
-        action.points,
-        action.color,
-        action.lineWidth,
-        action.opacity,
+  /** 压感画笔：逐段按压力调制线宽（钢笔工具专用） */
+  function drawPressureSegment(
+    ctx: CanvasRenderingContext2D,
+    points: Point[],
+    color: string,
+    baseWidth: number,
+    opacity: number,
+  ) {
+    if (points.length < 2) return;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const w = Math.max(
+        0.5,
+        (baseWidth * pressureScale(a.pressure) +
+          baseWidth * pressureScale(b.pressure)) /
+          2,
       );
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 矩形 */
+  function drawRect(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    const [a, b] = action.points;
+    if (!a || !b) return;
+    ctx.save();
+    ctx.globalAlpha = action.opacity;
+    ctx.strokeStyle = action.color;
+    ctx.lineWidth = action.lineWidth;
+    ctx.strokeRect(
+      Math.min(a.x, b.x),
+      Math.min(a.y, b.y),
+      Math.abs(b.x - a.x),
+      Math.abs(b.y - a.y),
+    );
+    ctx.restore();
+  }
+
+  /** 圆形（以两点为对角的外接椭圆） */
+  function drawCircle(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    const [a, b] = action.points;
+    if (!a || !b) return;
+    const rx = Math.abs(b.x - a.x) / 2;
+    const ry = Math.abs(b.y - a.y) / 2;
+    if (rx < 0.25 && ry < 0.25) return;
+    ctx.save();
+    ctx.globalAlpha = action.opacity;
+    ctx.strokeStyle = action.color;
+    ctx.lineWidth = action.lineWidth;
+    ctx.beginPath();
+    ctx.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 直线（arrow 时加箭头） */
+  function drawLine(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    const [a, b] = action.points;
+    if (!a || !b) return;
+    ctx.save();
+    ctx.globalAlpha = action.opacity;
+    ctx.strokeStyle = action.color;
+    ctx.lineWidth = action.lineWidth;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+
+    if (action.tool === "arrow") {
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      const head = Math.max(8, action.lineWidth * 4);
+      ctx.fillStyle = action.color;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(
+        b.x - head * Math.cos(angle - Math.PI / 6),
+        b.y - head * Math.sin(angle - Math.PI / 6),
+      );
+      ctx.lineTo(
+        b.x - head * Math.cos(angle + Math.PI / 6),
+        b.y - head * Math.sin(angle + Math.PI / 6),
+      );
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** 文字（支持多行） */
+  function drawText(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    const [p] = action.points;
+    if (!p || !action.text) return;
+    const size = action.fontSize ?? TEXT_FONT_SIZE;
+    ctx.save();
+    ctx.globalAlpha = action.opacity;
+    ctx.fillStyle = action.color;
+    ctx.font = `600 ${size}px "Plus Jakarta Sans", system-ui, sans-serif`;
+    ctx.textBaseline = "top";
+    const lines = action.text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], p.x, p.y + i * size * 1.25);
+    }
+    ctx.restore();
+  }
+
+  function drawAction(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    switch (action.tool) {
+      case "eraser":
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-out";
+        drawSmoothSegment(ctx, action.points, "#000", action.lineWidth, 1);
+        ctx.restore();
+        break;
+      case "rect":
+        drawRect(ctx, action);
+        break;
+      case "circle":
+        drawCircle(ctx, action);
+        break;
+      case "line":
+      case "arrow":
+        drawLine(ctx, action);
+        break;
+      case "text":
+        drawText(ctx, action);
+        break;
+      case "pen":
+        drawPressureSegment(
+          ctx,
+          action.points,
+          action.color,
+          action.lineWidth,
+          action.opacity,
+        );
+        break;
+      default:
+        drawSmoothSegment(
+          ctx,
+          action.points,
+          action.color,
+          action.lineWidth,
+          action.opacity,
+        );
     }
   }
 
@@ -226,6 +379,7 @@ export function useDrawing(
   function startDraw(e: PointerEvent): boolean {
     if (e.button !== 0 && e.button !== 2) return false;
     const p = toCssPoint(e);
+    const isShape = SHAPE_TOOLS.has(currentTool.value);
     currentAction = {
       tool: currentTool.value,
       color: currentColor.value,
@@ -233,6 +387,8 @@ export function useDrawing(
       opacity: currentOpacity(),
       points: [p],
     };
+    // 形状工具：起始点即两点起点
+    if (isShape) currentAction.points.push({ x: p.x, y: p.y });
     lastPoint = p;
     isDrawing.value = true;
     previewDirty = true;
@@ -243,6 +399,14 @@ export function useDrawing(
   function drawTo(e: PointerEvent) {
     if (!currentAction || !isDrawing.value) return;
     const p = toCssPoint(e);
+    // 形状工具：只更新终点
+    if (SHAPE_TOOLS.has(currentAction.tool)) {
+      currentAction.points[1] = p;
+      lastPoint = p;
+      previewDirty = true;
+      scheduleRender();
+      return;
+    }
     // 自适应最小采样距离（视角面积大则采样更稀）
     const minDistSq = 0.5;
     if (lastPoint) {
@@ -268,12 +432,51 @@ export function useDrawing(
     scheduleRender();
   }
 
+  /** 文字工具：以给定坐标落笔，携带文本内容 */
+  function startText(pos: Point, text: string) {
+    if (!text.trim()) return;
+    currentAction = {
+      tool: "text",
+      color: currentColor.value,
+      lineWidth: lineWidth.value,
+      opacity: currentOpacity(),
+      points: [{ x: pos.x, y: pos.y }],
+      text,
+      fontSize: TEXT_FONT_SIZE,
+    };
+    history.value.push(currentAction);
+    undoStack.value.push({ type: "add", actions: [currentAction] });
+    redoStack.value = [];
+    currentAction = null;
+    lastPoint = null;
+    isDrawing.value = false;
+    historyDirty = true;
+    scheduleRender();
+  }
+
   function endDraw() {
     if (!currentAction || !isDrawing.value) return;
-    // 单点也要留下痕迹
-    if (currentAction.points.length === 1) {
+    // 单点也要留下痕迹（自由笔）
+    const isShape = SHAPE_TOOLS.has(currentAction.tool);
+    if (currentAction.points.length === 1 && !isShape) {
       const p = currentAction.points[0];
-      currentAction.points.push({ x: p.x + 0.01, y: p.y + 0.01 });
+      currentAction.points.push({
+        x: p.x + 0.01,
+        y: p.y + 0.01,
+        pressure: p.pressure,
+      });
+    }
+    // 形状工具起点终点重合 → 丢弃（避免画个点）
+    if (isShape && currentAction.points.length === 2) {
+      const [a, b] = currentAction.points;
+      if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) {
+        currentAction = null;
+        lastPoint = null;
+        isDrawing.value = false;
+        previewDirty = true;
+        scheduleRender();
+        return;
+      }
     }
     history.value.push(currentAction);
     undoStack.value.push({ type: "add", actions: [currentAction] });
@@ -338,6 +541,29 @@ export function useDrawing(
     scheduleRender();
   }
 
+  /**
+   * 把已提交笔画重绘到外部 canvas（截图导出用）。
+   * 调用方负责设置 target 尺寸/变换；本函数以 CSS 像素坐标绘制。
+   */
+  function renderTo(
+    target: HTMLCanvasElement | null,
+    cssW: number,
+    cssH: number,
+    scale: number,
+  ) {
+    if (!target) return;
+    target.width = Math.floor(cssW * scale);
+    target.height = Math.floor(cssH * scale);
+    const ctx = target.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const action of history.value) {
+      drawAction(ctx, action);
+    }
+  }
+
   function destroy() {
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
@@ -364,10 +590,12 @@ export function useDrawing(
     startDraw,
     drawTo,
     endDraw,
+    startText,
     undo,
     redo,
     clearAll,
     hardReset,
+    renderTo,
     destroy,
     getDPR,
   };

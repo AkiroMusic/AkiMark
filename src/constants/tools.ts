@@ -19,16 +19,26 @@ export const TOOL_DEFS: ToolDef[] = [
     translucent: true,
   },
   { id: "eraser", label: "tool.eraser", hotkey: "3" },
+  { id: "line", label: "tool.line", hotkey: "4" },
+  { id: "rect", label: "tool.rect", hotkey: "5" },
+  { id: "circle", label: "tool.circle", hotkey: "6" },
+  { id: "arrow", label: "tool.arrow", hotkey: "7" },
+  { id: "text", label: "tool.text", hotkey: "8" },
 ];
 
 /** 线宽预设 */
 export const WIDTH_PRESETS = [1, 2, 3, 5, 8];
 
-/** 各工具线宽倍率（相对基础线宽） */
+/** 各工具线宽倍率（相对基础线宽）。形状/文字沿用 stroke 组。 */
 export const WIDTH_SCALE: Record<Tool, number> = {
   pen: 1,
-  highlighter: 7,
-  eraser: 8,
+  highlighter: 4,
+  eraser: 5,
+  line: 1,
+  rect: 1,
+  circle: 1,
+  arrow: 1,
+  text: 1,
 };
 
 /** 荧光笔透明度 */
@@ -36,12 +46,28 @@ export const HIGHLIGHTER_OPACITY = 0.45;
 export const PEN_OPACITY = 1;
 export const ERASER_OPACITY = 1;
 
-export function resolveLineWidths(
-  widths: Record<Tool, number>,
-): Record<Tool, number> {
-  return {
-    pen: widths.pen,
-    highlighter: widths.highlighter,
-    eraser: widths.eraser,
-  };
-}
+/** 文字工具默认字号（px） */
+export const TEXT_FONT_SIZE = 28;
+
+/** 形状工具 → 线宽分组（共用 stroke） */
+export const SHAPE_TOOLS: ReadonlySet<string> = new Set([
+  "rect",
+  "line",
+  "arrow",
+  "circle",
+]);
+
+/** 工具 → 线宽分组映射（工具栏调宽度用） */
+export const TOOL_WIDTH_GROUP: Record<
+  Tool,
+  "stroke" | "highlighter" | "eraser"
+> = {
+  pen: "stroke",
+  highlighter: "highlighter",
+  eraser: "eraser",
+  line: "stroke",
+  rect: "stroke",
+  circle: "stroke",
+  arrow: "stroke",
+  text: "stroke",
+};
