@@ -17,18 +17,21 @@ pub struct MonitorLogicalBounds {
 /// 光标所在显示器的逻辑边界（缩放后 CSS 像素），供前端坐标系换算。
 /// MVP 阶段暂未从前端调用，保留备用。
 #[allow(dead_code)]
-pub fn get_cursor_monitor_logical_bounds(app: &tauri::AppHandle) -> AppResult<Option<MonitorLogicalBounds>> {
+pub fn get_cursor_monitor_logical_bounds(
+    app: &tauri::AppHandle,
+) -> AppResult<Option<MonitorLogicalBounds>> {
     let window = app
         .get_webview_window("overlay")
         .ok_or(crate::error::AppError::WindowNotFound("overlay".into()))?;
 
-    let monitor = window
-        .current_monitor()?
-        .or_else(|| {
-            // 兜底：用光标位置
-            let pt = app.cursor_position().ok()?;
-            window.monitor_from_point(pt.x as f64, pt.y as f64).ok().flatten()
-        });
+    let monitor = window.current_monitor()?.or_else(|| {
+        // 兜底：用光标位置
+        let pt = app.cursor_position().ok()?;
+        window
+            .monitor_from_point(pt.x as f64, pt.y as f64)
+            .ok()
+            .flatten()
+    });
 
     let Some(monitor) = monitor else {
         return Ok(None);
