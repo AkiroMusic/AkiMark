@@ -9,6 +9,68 @@ import type { Tool } from "./composables/drawingTypes";
 
 const { t } = useI18n();
 
+/** 更新对象挂到 window 上，供手动下载按钮复用（避免重复 import check） */
+declare global {
+  interface Window {
+    __akimark_update?: {
+      version: string;
+      downloadAndInstall: () => Promise<void>;
+    };
+  }
+}
+
+// ---- 更新状态 ----
+type UpdateStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "upToDate" }
+  | { state: "available"; version: string }
+  | { state: "downloading" }
+  | { state: "ready" }
+  | { state: "failed" };
+const updateStatus = ref<UpdateStatus>({ state: "idle" });
+const updateChecking = ref(false);
+
+/** 从 @tauri-apps/plugin-updater 动态导入 check（避免覆盖层 bundle 加载无关代码） */
+async function checkForUpdates(manual = false) {
+  if (updateChecking.value) return;
+  updateChecking.value = true;
+  if (manual) updateStatus.value = { state: "checking" };
+  try {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    if (update) {
+      updateStatus.value = {
+        state: "available",
+        version: update.version,
+      };
+      // 静默发现新版本时提示用户（已是最新则无感知）
+      window.__akimark_update = update;
+    } else if (manual) {
+      updateStatus.value = { state: "upToDate" };
+    }
+  } catch (e) {
+    console.warn("[akimark] 检查更新失败:", e);
+    if (manual) updateStatus.value = { state: "failed" };
+  } finally {
+    updateChecking.value = false;
+  }
+}
+
+async function downloadUpdate() {
+  const update = window.__akimark_update;
+  if (!update) return;
+  updateStatus.value = { state: "downloading" };
+  try {
+    await update.downloadAndInstall();
+    updateStatus.value = { state: "ready" };
+    window.__akimark_update = undefined;
+  } catch (e) {
+    console.warn("[akimark] 下载更新失败:", e);
+    updateStatus.value = { state: "failed" };
+  }
+}
+
 // ---- 表单状态 ----
 const shortcuts = reactive<Shortcuts>({
   toggleDrawing: "Ctrl+Shift+R",
@@ -18,9 +80,11 @@ const shortcuts = reactive<Shortcuts>({
 
 const defaultTool = ref<Tool>("pen");
 const defaultColor = ref(DEFAULT_COLOR);
-const lineWidths = reactive({ stroke: 3, highlighter: 18, eraser: 24 });
+const lineWidths = reactive({ stroke: 3, highlighter: 10, eraser: 12 });
 const autostart = ref(false);
 const openSettingsOnStartup = ref(true);
+/** 导出目录；null = 系统图片目录 */
+const exportDir = ref<string | null>(null);
 
 const loading = ref(true);
 const saving = ref(false);
@@ -74,6 +138,7 @@ onMounted(async () => {
     lineWidths.highlighter = cfg.general.lineWidths.highlighter;
     lineWidths.eraser = cfg.general.lineWidths.eraser;
     openSettingsOnStartup.value = cfg.general.openSettingsOnStartup;
+    exportDir.value = cfg.general.exportDir ?? null;
 
     try {
       autostart.value = await invoke<boolean>("get_autostart");
@@ -92,6 +157,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+
+  // 静默检查更新（失败无感知，仅手动检查才显示错误）
+  checkForUpdates(false);
 });
 
 // ---- 快捷键录制 ----
@@ -161,6 +229,24 @@ function validateShortcuts(): string | null {
   return null;
 }
 
+// ---- 导出目录 ----
+/** 打开系统目录选择器（tauri-plugin-dialog），返回所选目录或 null */
+async function chooseExportDir() {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: t("settings.exportDirChoose"),
+    });
+    if (typeof selected === "string" && selected) {
+      exportDir.value = selected;
+    }
+  } catch (e) {
+    console.warn("[akimark] 选择导出目录失败:", e);
+  }
+}
+
 // ---- 保存 ----
 async function save() {
   const err = validateShortcuts();
@@ -189,6 +275,7 @@ async function save() {
         defaultTool: defaultTool.value,
         defaultColor: defaultColor.value,
         openSettingsOnStartup: openSettingsOnStartup.value,
+        exportDir: exportDir.value,
       },
     });
     // 自启动
@@ -329,6 +416,27 @@ async function save() {
         </div>
       </section>
 
+      <!-- 导出目录 -->
+      <section class="section double-bezel">
+        <h2 class="section-title">{{ t("settings.exportDir") }}</h2>
+        <div class="export-row">
+          <span class="export-path font-mono" :title="exportDir ?? undefined">
+            {{ exportDir || t("settings.exportDirDefault") }}
+          </span>
+          <button class="update-btn" @click="chooseExportDir">
+            {{ t("settings.exportDirChoose") }}
+          </button>
+          <button
+            v-if="exportDir"
+            class="update-btn ghost"
+            @click="exportDir = null"
+          >
+            ✕
+          </button>
+        </div>
+        <p class="section-hint">{{ t("settings.exportDirDesc") }}</p>
+      </section>
+
       <!-- 快捷键冲突横幅：被其他程序占用的全局快捷键 -->
       <div v-if="conflictKeys.length > 0" class="conflict-banner" role="alert">
         <span class="conflict-icon" aria-hidden="true">⚠</span>
@@ -344,6 +452,65 @@ async function save() {
       <p v-if="errorMsg" class="error-text">
         {{ isI18nErrorKey(errorMsg) ? t(`settings.${errorMsg}`) : errorMsg }}
       </p>
+
+      <!-- 软件更新 -->
+      <section class="section double-bezel">
+        <h2 class="section-title">{{ t("settings.updates") }}</h2>
+        <div class="update-row">
+          <div class="update-status">
+            <template v-if="updateStatus.state === 'checking'">
+              <span class="update-spinner" aria-hidden="true"></span>
+              <span>{{ t("settings.checking") }}</span>
+            </template>
+            <template v-else-if="updateStatus.state === 'upToDate'">
+              <span class="update-ok" aria-hidden="true">✓</span>
+              <span>{{ t("settings.upToDate") }}</span>
+            </template>
+            <template v-else-if="updateStatus.state === 'available'">
+              <span class="update-ok" aria-hidden="true">⬇</span>
+              <span>
+                {{
+                  t("settings.updateAvailable").replace(
+                    "{version}",
+                    updateStatus.version,
+                  )
+                }}
+              </span>
+            </template>
+            <template v-else-if="updateStatus.state === 'downloading'">
+              <span class="update-spinner" aria-hidden="true"></span>
+              <span>{{ t("settings.downloading") }}</span>
+            </template>
+            <template v-else-if="updateStatus.state === 'ready'">
+              <span class="update-ok" aria-hidden="true">✓</span>
+              <span>{{ t("settings.installReady") }}</span>
+            </template>
+            <template v-else-if="updateStatus.state === 'failed'">
+              <span class="update-err" aria-hidden="true">✕</span>
+              <span>{{ t("settings.updateFailed") }}</span>
+            </template>
+          </div>
+          <button
+            v-if="
+              updateStatus.state === 'available' ||
+              updateStatus.state === 'downloading'
+            "
+            class="update-btn"
+            :disabled="updateStatus.state === 'downloading'"
+            @click="downloadUpdate"
+          >
+            {{ t("settings.installUpdate") }}
+          </button>
+          <button
+            v-else
+            class="update-btn ghost"
+            :disabled="updateStatus.state === 'checking'"
+            @click="checkForUpdates(true)"
+          >
+            {{ t("settings.checkUpdates") }}
+          </button>
+        </div>
+      </section>
 
       <!-- 快捷键 / 功能一览 -->
       <section class="section double-bezel">
@@ -365,7 +532,7 @@ async function save() {
 
         <h3 class="help-sub">{{ t("settings.helpInApp") }}</h3>
         <div class="help-row">
-          <kbd class="help-kbd font-mono">1 / 2 / 3</kbd>
+          <kbd class="help-kbd font-mono">1–8</kbd>
           <span class="help-desc">{{ t("settings.helpIn1") }}</span>
         </div>
         <div class="help-row">
@@ -379,6 +546,18 @@ async function save() {
         <div class="help-row">
           <kbd class="help-kbd font-mono">X</kbd>
           <span class="help-desc">{{ t("settings.helpInX") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">F</kbd>
+          <span class="help-desc">{{ t("settings.helpInF") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">M</kbd>
+          <span class="help-desc">{{ t("settings.helpInM") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">S</kbd>
+          <span class="help-desc">{{ t("settings.helpInS") }}</span>
         </div>
         <div class="help-row">
           <kbd class="help-kbd font-mono">Ctrl+C</kbd>
@@ -399,6 +578,20 @@ async function save() {
         </div>
         <div class="help-row">
           <span class="help-mouse">{{ t("settings.helpMouseErase") }}</span>
+        </div>
+
+        <h3 class="help-sub">{{ t("settings.helpMore") }}</h3>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpTray") }}</span>
+        </div>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpAutoPenetrate") }}</span>
+        </div>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpPressure") }}</span>
+        </div>
+        <div class="help-row">
+          <span class="help-mouse">{{ t("settings.helpConflict") }}</span>
         </div>
 
         <p class="section-hint">{{ t("settings.helpTip") }}</p>
@@ -720,12 +913,99 @@ async function save() {
   border-color: var(--accent);
 }
 
+/* ---- 导出目录 ---- */
+.export-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.export-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
 /* ---- 错误 ---- */
 .error-text {
   font-size: 12px;
   color: var(--error);
   margin: 0;
   padding: 0 var(--space-1);
+}
+
+/* ---- 软件更新 ---- */
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+.update-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.update-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.update-ok {
+  color: var(--success);
+  font-size: 13px;
+  line-height: 1;
+}
+.update-err {
+  color: var(--error);
+  font-size: 13px;
+  line-height: 1;
+}
+.update-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--duration-hover) var(--ease-default);
+}
+.update-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+  border-color: var(--accent);
+}
+.update-btn.ghost {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-secondary);
+}
+.update-btn.ghost:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+.update-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---- 快捷键冲突横幅 ---- */
