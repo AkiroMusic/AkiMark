@@ -14,6 +14,8 @@ const props = defineProps<{
   canRedo: boolean;
   canClear: boolean;
   penetrating: boolean;
+  spotlight: boolean;
+  magnifier: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,6 +28,9 @@ const emit = defineEmits<{
   redo: [];
   clear: [];
   penetrate: [];
+  export: [];
+  toggleSpotlight: [];
+  toggleMagnifier: [];
   exit: [];
 }>();
 
@@ -38,6 +43,16 @@ function toolIcon(tool: Tool) {
       return "M9 11 L18 2 L22 6 L13 15 Z M5 19 L9 15 M7 17 L3 21 Z";
     case "eraser":
       return "M7 21 L20 8 L16 4 L3 17 Z M7 21 L10 18 M14 14 L18 18";
+    case "rect":
+      return "M4 5 H20 V19 H4 Z";
+    case "line":
+      return "M5 19 L19 5";
+    case "circle":
+      return "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3";
+    case "arrow":
+      return "M4 20 L18 6 M11 6 H18 V13";
+    case "text":
+      return "M4 6 V3 H20 V6 M12 3 V21 M9 21 H15";
   }
 }
 
@@ -45,18 +60,24 @@ function isActiveTool(tool: Tool) {
   return tool === props.tool;
 }
 
-// 线宽调节
+// 线宽调节：形状/文字工具共用 stroke 组
+const WIDTH_GROUP: Record<Tool, "stroke" | "highlighter" | "eraser"> = {
+  pen: "stroke",
+  highlighter: "highlighter",
+  eraser: "eraser",
+  line: "stroke",
+  rect: "stroke",
+  circle: "stroke",
+  arrow: "stroke",
+  text: "stroke",
+};
+
 function widthOf(group: keyof typeof props.lineWidth) {
   return props.lineWidth[group];
 }
 
 function changeWidth(delta: number) {
-  const group: Record<Tool, "stroke" | "highlighter" | "eraser"> = {
-    pen: "stroke",
-    highlighter: "highlighter",
-    eraser: "eraser",
-  };
-  const key = group[props.tool];
+  const key = WIDTH_GROUP[props.tool];
   const cur = props.lineWidth[key];
   const next = Math.min(40, Math.max(1, Math.round(cur) + delta));
   emit("updateWidth", { [key]: next } as Record<string, number>);
@@ -105,18 +126,69 @@ function changeWidth(delta: number) {
     <div class="toolbar-group width-group">
       <button class="mini-btn" @click="changeWidth(-1)">−</button>
       <span class="width-value">{{
-        Math.round(
-          widthOf(
-            (tool === "pen" ? "stroke" : tool) as
-              "stroke" | "highlighter" | "eraser",
-          ),
-        )
+        Math.round(widthOf(WIDTH_GROUP[tool]))
       }}</span>
       <button class="mini-btn" @click="changeWidth(1)">+</button>
     </div>
 
     <!-- 动作组 -->
     <div class="toolbar-group action-group">
+      <button
+        class="mini-btn"
+        :class="{ active: spotlight }"
+        :title="t('action.spotlight')"
+        @click="emit('toggleSpotlight')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="12" cy="12" r="5" />
+          <path
+            d="M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M5 5 L8 8 M16 16 L19 19 M19 5 L16 8 M8 16 L5 19"
+          />
+        </svg>
+      </button>
+      <button
+        class="mini-btn"
+        :class="{ active: magnifier }"
+        :title="t('action.magnifier')"
+        @click="emit('toggleMagnifier')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21 L16.65 16.65" />
+          <path d="M11 8 V14 M8 11 H14" />
+        </svg>
+      </button>
+      <button
+        class="mini-btn"
+        :title="t('action.export')"
+        @click="emit('export')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M21 15 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V15" />
+          <path d="M7 8 L12 3 L17 8 M12 3 V15" />
+        </svg>
+      </button>
       <button
         class="mini-btn"
         :disabled="!canUndo"
@@ -206,8 +278,6 @@ function changeWidth(delta: number) {
         </svg>
       </button>
     </div>
-
-    <div class="toolbar-hint">{{ t("toolbar.space") }}</div>
   </div>
 </template>
 
@@ -328,6 +398,11 @@ function changeWidth(delta: number) {
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
+.mini-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 .mini-btn:disabled {
   opacity: 0.35;
   cursor: default;
@@ -343,14 +418,5 @@ function changeWidth(delta: number) {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-}
-
-/* 提示 */
-.toolbar-hint {
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: var(--text-tertiary);
-  padding-right: var(--space-1);
-  white-space: nowrap;
 }
 </style>

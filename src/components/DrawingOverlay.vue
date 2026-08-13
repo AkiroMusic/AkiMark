@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+  nextTick,
+} from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import ToolToolbar from "./ToolToolbar.vue";
 import { useDrawing } from "../composables/useDrawing";
 import { COLOR_PALETTE } from "../constants/colors";
 import { useI18n } from "../i18n";
 import type { AppConfig } from "../configTypes";
+import type { Point, Tool } from "../composables/drawingTypes";
 
 const { t } = useI18n();
 
@@ -18,6 +27,18 @@ const showToolbar = ref(false);
 const isPenetrating = ref(false);
 const toast = ref<{ text: string; ts: number } | null>(null);
 
+// 文字工具：待提交的输入框
+const textEditing = ref<{ x: number; y: number; value: string } | null>(null);
+const textInputRef = ref<HTMLInputElement | null>(null);
+
+// 聚光灯模式
+const spotlight = ref(false);
+
+// 放大镜模式（ZoomIt 式）：0 = 关闭 / 2 / 4（缩放倍率）
+const magnifier = ref(0);
+const magnifierBg = ref("");
+const viewport = reactive({ w: window.innerWidth, h: window.innerHeight });
+
 // 光标位置（SVG 光标）
 const cursorPos = ref({ x: 0, y: 0 });
 const cursorVisible = ref(false);
@@ -25,15 +46,27 @@ const cursorVisible = ref(false);
 /**
  * 光标渲染偏移：让 SVG 中"起作用的位置"对准鼠标。
  * - pen：笔尖在 viewBox 左下角 (约 3.5, 20.5) → 左移 3.5px、上移 20.5px
- * - highlighter / eraser：图形居中 → 左移/上移 12px
+ * - highlighter / line / rect / circle / arrow / text：图形居中 → 左移/上移 12px
  */
 const CURSOR_OFFSET: Record<string, [number, number]> = {
   pen: [-3.5, -20.5],
   highlighter: [-12, -12],
-  eraser: [-12, -12],
+  line: [-12, -12],
+  rect: [-12, -12],
+  circle: [-12, -12],
+  arrow: [-12, -12],
+  text: [-12, -12],
 };
+/** 橡皮实际擦除直径（CSS px）= 基础线宽 × WIDTH_SCALE.eraser */
+const eraserGuideSize = computed(() => drawing.lineWidth.value);
 function cursorTransform(): string {
-  const [dx, dy] = CURSOR_OFFSET[drawing.currentTool.value] ?? [-12, -12];
+  const tool = drawing.currentTool.value;
+  if (tool === "eraser") {
+    // 橡皮：虚线圆以鼠标为圆心，直径 = 实际擦除宽度
+    const s = eraserGuideSize.value;
+    return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${-s / 2}px, ${-s / 2}px)`;
+  }
+  const [dx, dy] = CURSOR_OFFSET[tool] ?? [-12, -12];
   return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
 }
 
@@ -106,6 +139,9 @@ async function persistDrawingPrefs() {
 let pointerDown = false;
 let rmbErasing = false;
 let toastTimer: number | null = null;
+let exportInFlight = false;
+// 导出/放大镜截屏期间锁定输入：防止键盘/指针事件篡改 history，导致导出图与所见不一致
+let uiLocked = false;
 let clearListener: (() => void) | null = null;
 let modeListener: (() => void) | null = null;
 let configListener: (() => void) | null = null;
@@ -114,14 +150,33 @@ let configListener: (() => void) | null = null;
 function resizeCanvases() {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  viewport.w = w;
+  viewport.h = h;
   drawing.setupCanvases(w, h, window.devicePixelRatio);
 }
 
 // ---- 指针事件 ----
 function onPointerDown(e: PointerEvent) {
+  // 截屏导出期间锁定交互
+  if (uiLocked) return;
   // 点击工具栏区域不画
   if (isOverToolbar(e)) return;
   cursorVisible.value = true;
+
+  // 放大镜模式下：只跟随光标缩放（不绘制、不平移）
+  if (magnifier.value > 0) {
+    return;
+  }
+
+  // 文字工具：点击位置弹出输入框（已有输入框则先提交上一处）
+  if (drawing.currentTool.value === "text") {
+    if (textEditing.value) commitText();
+    openTextEditor(e);
+    return;
+  }
+
+  // 其他工具点击画布：提交未完成的文字输入
+  if (textEditing.value) commitText();
 
   // 右键 = 按住擦除
   if (e.button === 2) {
@@ -153,6 +208,53 @@ function onPointerLeave() {
   cursorVisible.value = false;
 }
 
+// ---- 文字工具输入框 ----
+/** 打开时间戳：用于区分"焦点竞态 blur"与"用户离开 blur" */
+let textOpenedAt = 0;
+
+function openTextEditor(e: PointerEvent) {
+  const rect = previewCanvas.value?.getBoundingClientRect();
+  const x = e.clientX - (rect?.left ?? 0);
+  const y = e.clientY - (rect?.top ?? 0);
+  textOpenedAt = Date.now();
+  textEditing.value = { x, y, value: "" };
+  focusTextInput();
+}
+
+/** 聚焦输入框：nextTick 优先，失败则 setTimeout 兜底（WebView2 焦点竞态） */
+function focusTextInput() {
+  nextTick(() => {
+    const el = textInputRef.value;
+    if (!el) return;
+    el.focus();
+    // 首次聚焦可能被 pointerdown 的默认行为抢走，200ms 内重试
+    setTimeout(() => {
+      if (textEditing.value && document.activeElement !== textInputRef.value) {
+        textInputRef.value?.focus();
+      }
+    }, 200);
+  });
+}
+
+/** 输入框失焦：打开后 200ms 内的 blur 视为焦点竞态，不自动提交 */
+function onTextBlur() {
+  if (Date.now() - textOpenedAt < 200) {
+    focusTextInput();
+    return;
+  }
+  commitText();
+}
+
+/** 提交文字：落笔并关闭输入框（Esc/失焦取消） */
+function commitText(cancel = false) {
+  const ed = textEditing.value;
+  if (!ed) return;
+  textEditing.value = null;
+  if (!cancel && ed.value.trim()) {
+    drawing.startText({ x: ed.x, y: ed.y } as Point, ed.value);
+  }
+}
+
 function isOverToolbar(e: PointerEvent): boolean {
   const el = document.querySelector("[data-toolbar]");
   if (!el) return false;
@@ -167,8 +269,20 @@ function isOverToolbar(e: PointerEvent): boolean {
 
 // ---- 快捷键 ----
 function onKeyDown(e: KeyboardEvent) {
+  // 截屏导出期间锁定快捷键
+  if (uiLocked) return;
   const k = e.key;
   const meta = e.ctrlKey || e.metaKey;
+
+  // 文字输入框激活时：Enter 提交、Esc 取消，其余键不拦截
+  if (textEditing.value) {
+    if (k === "Enter") {
+      commitText();
+    } else if (k === "Escape") {
+      commitText(true);
+    }
+    return;
+  }
 
   switch (k) {
     case "1":
@@ -179,6 +293,21 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "3":
       selectTool("eraser");
+      break;
+    case "4":
+      selectTool("line");
+      break;
+    case "5":
+      selectTool("rect");
+      break;
+    case "6":
+      selectTool("circle");
+      break;
+    case "7":
+      selectTool("arrow");
+      break;
+    case "8":
+      selectTool("text");
       break;
     case "q":
       cycleColor(-1);
@@ -193,6 +322,18 @@ function onKeyDown(e: KeyboardEvent) {
     case "x":
     case "X":
       togglePenetration();
+      break;
+    case "f":
+    case "F":
+      toggleSpotlight();
+      break;
+    case "m":
+    case "M":
+      void toggleMagnifier();
+      break;
+    case "s":
+    case "S":
+      if (!meta) void exportScreenshot();
       break;
     case "c":
     case "C":
@@ -216,13 +357,22 @@ function onKeyDown(e: KeyboardEvent) {
       }
       break;
     case "Escape":
-      exitDrawing();
+      // 放大镜优先退出放大镜，其次退出标注
+      if (magnifier.value > 0) {
+        toggleMagnifier();
+      } else {
+        exitDrawing();
+      }
       break;
   }
 }
 
-function selectTool(tool: "pen" | "highlighter" | "eraser") {
+function selectTool(tool: Tool) {
   drawing.currentTool.value = tool;
+  // 切到文字工具时收起未提交的输入框
+  if (tool !== "text" && textEditing.value) {
+    commitText(true);
+  }
   updateCursorIcon();
 }
 
@@ -249,6 +399,106 @@ async function togglePenetration() {
     await invoke("exit_penetration_mode");
   }
   showToolbar.value = false;
+}
+
+// ---- 聚光灯 ----
+function toggleSpotlight() {
+  spotlight.value = !spotlight.value;
+  if (spotlight.value) {
+    showToast(t("action.spotlight"));
+  }
+}
+
+// ---- 放大镜（ZoomIt 式：截屏底图 + CSS 缩放跟随光标）----
+async function toggleMagnifier() {
+  if (magnifier.value === 0) {
+    // 开启：临时隐藏 UI 并截取屏幕底图
+    const prevToolbar = showToolbar.value;
+    const prevSpotlight = spotlight.value;
+    showToolbar.value = false;
+    spotlight.value = false;
+    textEditing.value = null;
+
+    uiLocked = true;
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    try {
+      const base64 = await invoke<string>("capture_screen");
+      magnifierBg.value = `data:image/png;base64,${base64}`;
+      magnifier.value = 2;
+    } catch (err) {
+      console.error("magnifier capture failed", err);
+      showToast(t("action.exportFailed"));
+    } finally {
+      uiLocked = false;
+      showToolbar.value = prevToolbar;
+      spotlight.value = prevSpotlight;
+    }
+  } else {
+    magnifier.value = magnifier.value === 2 ? 4 : 0;
+  }
+}
+
+// ---- 导出截图 ----
+async function exportScreenshot() {
+  if (exportInFlight) return;
+  exportInFlight = true;
+  uiLocked = true;
+  showToast(t("action.exporting"));
+  try {
+    // 1. 临时隐藏 UI（工具栏/光标/聚光灯/放大镜/文字框）并请后端截取屏幕底图
+    const prevToolbar = showToolbar.value;
+    const prevSpotlight = spotlight.value;
+    const prevMagnifier = magnifier.value;
+    showToolbar.value = false;
+    spotlight.value = false;
+    magnifier.value = 0;
+    textEditing.value = null;
+
+    // 等一帧让 DOM 隐藏生效
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    const base64 = await invoke<string>("capture_screen");
+
+    // 2. 恢复 UI
+    showToolbar.value = prevToolbar;
+    spotlight.value = prevSpotlight;
+    magnifier.value = prevMagnifier;
+
+    // 3. 合成：底图 + 已提交笔画
+    const scale = window.devicePixelRatio;
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+    const img = new Image();
+    img.src = `data:image/png;base64,${base64}`;
+    await img.decode();
+
+    const composite = document.createElement("canvas");
+    composite.width = Math.floor(cssW * scale);
+    composite.height = Math.floor(cssH * scale);
+    const ctx = composite.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(img, 0, 0, composite.width, composite.height);
+
+    // 笔画先画到独立透明层：橡皮用 destination-out 擦透明层只会擦掉笔画，
+    // 直接画到底图上会打穿底图像素（导出 PNG 出现透明洞）。
+    const drawLayer = document.createElement("canvas");
+    drawLayer.width = composite.width;
+    drawLayer.height = composite.height;
+    drawing.renderTo(drawLayer, cssW, cssH, scale);
+    ctx.drawImage(drawLayer, 0, 0);
+
+    // 4. 交给后端保存到图片目录
+    const png = composite.toDataURL("image/png").split(",")[1];
+    const savedPath = await invoke<string>("save_export", { pngBase64: png });
+    showToast(`${t("action.exported")} ${savedPath.split(/[\\/]/).pop()}`);
+  } catch (err) {
+    console.error("export failed", err);
+    showToast(t("action.exportFailed"));
+  } finally {
+    uiLocked = false;
+    exportInFlight = false;
+  }
 }
 
 async function exitDrawing() {
@@ -378,6 +628,8 @@ onBeforeUnmount(() => {
       :can-redo="drawing.canRedo.value"
       :can-clear="drawing.canClear.value"
       :penetrating="isPenetrating"
+      :spotlight="spotlight"
+      :magnifier="magnifier > 0"
       @select-tool="selectTool"
       @select-color="(c: string) => (drawing.currentColor.value = c)"
       @update-width="
@@ -388,7 +640,52 @@ onBeforeUnmount(() => {
       @redo="drawing.redo()"
       @clear="drawing.clearAll()"
       @penetrate="togglePenetration"
+      @export="exportScreenshot"
+      @toggle-spotlight="toggleSpotlight"
+      @toggle-magnifier="toggleMagnifier"
       @exit="exitDrawing"
+    />
+
+    <!-- 文字工具输入框 -->
+    <input
+      v-if="textEditing"
+      ref="textInputRef"
+      v-model="textEditing.value"
+      class="text-input"
+      :style="{ left: textEditing.x + 'px', top: textEditing.y + 'px' }"
+      :placeholder="t('action.textPlaceholder')"
+      @pointerdown.stop
+      @keydown.stop
+      @keydown.enter.prevent="commitText()"
+      @keydown.esc="commitText(true)"
+      @blur="onTextBlur"
+    />
+
+    <!-- 聚光灯遮罩：光标处圆孔 -->
+    <div
+      v-if="spotlight"
+      class="spotlight-mask"
+      :style="{
+        background: `radial-gradient(circle 160px at ${cursorPos.x}px ${cursorPos.y}px, transparent 0, transparent 130px, rgba(3, 5, 10, 0.72) 165px)`,
+      }"
+    />
+
+    <!-- 放大镜：截屏底图 + CSS 缩放跟随光标 -->
+    <div
+      v-if="magnifier > 0 && magnifierBg"
+      class="magnifier-layer"
+      :style="{
+        backgroundImage: `url(${magnifierBg})`,
+        backgroundSize: `${viewport.w}px ${viewport.h}px`,
+        transform: `scale(${magnifier})`,
+        transformOrigin: `${cursorPos.x}px ${cursorPos.y}px`,
+      }"
+    />
+    <!-- 放大镜聚焦环：提示当前放大中心 -->
+    <div
+      v-if="magnifier > 0"
+      class="magnifier-ring"
+      :style="{ left: cursorPos.x + 'px', top: cursorPos.y + 'px' }"
     />
 
     <!-- 提示 Toast -->
@@ -399,7 +696,24 @@ onBeforeUnmount(() => {
     </Transition>
 
     <!-- 自定义光标（隐藏系统光标） -->
+    <!-- 橡皮：虚线圆 = 实际擦除范围（直径随线宽变化），半透明填充便于定位 -->
     <div
+      v-if="drawing.currentTool.value === 'eraser'"
+      v-show="cursorVisible"
+      class="custom-cursor eraser-cursor"
+      :style="{ transform: cursorTransform() }"
+    >
+      <div
+        class="eraser-guide"
+        :style="{
+          width: eraserGuideSize + 'px',
+          height: eraserGuideSize + 'px',
+        }"
+      />
+    </div>
+    <!-- 其他工具：SVG 图标光标 -->
+    <div
+      v-else
       v-show="cursorVisible"
       class="custom-cursor"
       :class="`cursor-${drawing.currentTool.value}`"
@@ -432,10 +746,27 @@ onBeforeUnmount(() => {
         <template v-else-if="drawing.currentTool.value === 'highlighter'">
           <path d="M4 14 L10 4 L18 12 L8 20 Z" />
         </template>
-        <!-- 橡皮 -->
-        <template v-else>
+        <!-- 直线 -->
+        <template v-else-if="drawing.currentTool.value === 'line'">
+          <path d="M5 19 L19 5" />
+        </template>
+        <!-- 矩形 -->
+        <template v-else-if="drawing.currentTool.value === 'rect'">
+          <rect x="5" y="5" width="14" height="14" />
+        </template>
+        <!-- 圆形 -->
+        <template v-else-if="drawing.currentTool.value === 'circle'">
           <circle cx="12" cy="12" r="8" />
-          <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+        </template>
+        <!-- 箭头：用圆点光标（避免与绘制出的箭头混淆） -->
+        <template v-else-if="drawing.currentTool.value === 'arrow'">
+          <circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="6" opacity="0.4" />
+        </template>
+        <!-- 文字 -->
+        <template v-else>
+          <path d="M4 6 V3 H20 V6" />
+          <path d="M12 3 V21 M9 21 H15" />
         </template>
       </svg>
     </div>
@@ -460,6 +791,61 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+/* ---- 文字工具输入框 ---- */
+.text-input {
+  position: fixed;
+  transform: translateY(-1px);
+  min-width: 120px;
+  padding: 2px 4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.25;
+  outline: none;
+  caret-color: var(--accent);
+  z-index: var(--toolbar-z);
+  box-shadow: var(--shadow-float);
+}
+
+/* ---- 聚光灯遮罩 ---- */
+.spotlight-mask {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: calc(var(--toolbar-z) - 1);
+}
+
+/* ---- 放大镜 ---- */
+.magnifier-layer {
+  position: fixed;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, transform-origin;
+  transition:
+    transform var(--duration-hover) var(--ease-default),
+    transform-origin 0.05s linear;
+}
+.magnifier-ring {
+  position: fixed;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 1.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: var(--radius-full);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 12px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  z-index: calc(var(--toolbar-z) - 1);
+}
+
 /* ---- 自定义光标 ---- */
 .custom-cursor {
   position: fixed;
@@ -475,6 +861,28 @@ onBeforeUnmount(() => {
 .cursor-svg {
   width: 100%;
   height: 100%;
+}
+
+/* 橡皮光标：虚线圆 = 实际擦除范围 */
+.eraser-cursor {
+  width: 0;
+  height: 0;
+  filter: none;
+}
+.eraser-guide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(4, 6, 12, 0.45),
+    inset 0 0 0 1px rgba(4, 6, 12, 0.25),
+    0 0 10px rgba(4, 6, 12, 0.35);
+  transition:
+    width var(--duration-spring) var(--ease-spring),
+    height var(--duration-spring) var(--ease-spring);
 }
 
 /* ---- Toast ---- */
