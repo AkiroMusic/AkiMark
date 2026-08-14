@@ -16,6 +16,8 @@ const props = defineProps<{
   penetrating: boolean;
   spotlight: boolean;
   magnifier: boolean;
+  board: "none" | "white" | "black";
+  zoom: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +33,8 @@ const emit = defineEmits<{
   export: [];
   toggleSpotlight: [];
   toggleMagnifier: [];
+  toggleBoard: [];
+  toggleZoom: [];
   exit: [];
 }>();
 
@@ -38,6 +42,7 @@ const emit = defineEmits<{
 function toolIcon(tool: Tool) {
   switch (tool) {
     case "pen":
+    case "fading":
       return "M12 19 L19 5 L16 4 L4 15 Z M12 19 L5 19 Z";
     case "highlighter":
       return "M9 11 L18 2 L22 6 L13 15 Z M5 19 L9 15 M7 17 L3 21 Z";
@@ -53,6 +58,9 @@ function toolIcon(tool: Tool) {
       return "M4 20 L18 6 M11 6 H18 V13";
     case "text":
       return "M4 6 V3 H20 V6 M12 3 V21 M9 21 H15";
+    case "blur":
+      // 马赛克：四宫格小方块
+      return "M4 4 H8 V8 H4 Z M12 4 H16 V8 H12 Z M4 12 H8 V16 H4 Z M12 12 H16 V16 H12 Z";
   }
 }
 
@@ -70,6 +78,8 @@ const WIDTH_GROUP: Record<Tool, "stroke" | "highlighter" | "eraser"> = {
   circle: "stroke",
   arrow: "stroke",
   text: "stroke",
+  fading: "stroke",
+  blur: "stroke",
 };
 
 function widthOf(group: keyof typeof props.lineWidth) {
@@ -170,6 +180,43 @@ function changeWidth(delta: number) {
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21 L16.65 16.65" />
           <path d="M11 8 V14 M8 11 H14" />
+        </svg>
+      </button>
+      <button
+        class="mini-btn"
+        :class="{ active: zoom }"
+        :title="t('action.zoom')"
+        @click="emit('toggleZoom')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21 L16.65 16.65" />
+          <rect x="8" y="8" width="6" height="6" />
+        </svg>
+      </button>
+      <button
+        class="mini-btn"
+        :class="{ active: board !== 'none' }"
+        :title="board === 'black' ? t('action.boardBlack') : t('action.boardWhite')"
+        @click="emit('toggleBoard')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="4" y="4" width="16" height="13" rx="1" />
+          <path d="M9 21 L12 17 L15 21" />
         </svg>
       </button>
       <button

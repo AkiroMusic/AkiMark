@@ -27,8 +27,13 @@ const showToolbar = ref(false);
 const isPenetrating = ref(false);
 const toast = ref<{ text: string; ts: number } | null>(null);
 
-// 文字工具：待提交的输入框
-const textEditing = ref<{ x: number; y: number; value: string } | null>(null);
+// 文字工具：待提交的输入框（x/y 为屏幕 client 坐标；anchor 为打开时的缩放锚点）
+const textEditing = ref<{
+  x: number;
+  y: number;
+  value: string;
+  anchor: Point | null;
+} | null>(null);
 const textInputRef = ref<HTMLInputElement | null>(null);
 
 // 聚光灯模式
@@ -38,6 +43,15 @@ const spotlight = ref(false);
 const magnifier = ref(0);
 const magnifierBg = ref("");
 const viewport = reactive({ w: window.innerWidth, h: window.innerHeight });
+
+// 黑白板模式：无 / 白板 / 黑板（纯色底，导出时免截屏）
+const boardMode = ref<"none" | "white" | "black">("none");
+
+// 屏幕缩放（冻结缩放，ZoomIt Ctrl+1 式）：0 = 关闭 / 2 / 4 / 6 / 8
+const zoom = ref(0);
+const zoomBg = ref("");
+/** 本次笔画按下时刻的光标位置：捕获空间逆映射基准（笔画中途不随鼠标移动） */
+const zoomAnchor = ref<Point | null>(null);
 
 // 光标位置（SVG 光标）
 const cursorPos = ref({ x: 0, y: 0 });
@@ -56,13 +70,15 @@ const CURSOR_OFFSET: Record<string, [number, number]> = {
   circle: [-12, -12],
   arrow: [-12, -12],
   text: [-12, -12],
+  fading: [-3.5, -20.5],
+  blur: [-12, -12],
 };
 /** 橡皮实际擦除直径（CSS px）= 基础线宽 × WIDTH_SCALE.eraser */
 const eraserGuideSize = computed(() => drawing.lineWidth.value);
 function cursorTransform(): string {
   const tool = drawing.currentTool.value;
-  if (tool === "eraser") {
-    // 橡皮：虚线圆以鼠标为圆心，直径 = 实际擦除宽度
+  if (tool === "eraser" || tool === "blur") {
+    // 橡皮/马赛克：以鼠标为圆心的圆形引导，直径 = 实际作用宽度
     const s = eraserGuideSize.value;
     return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${-s / 2}px, ${-s / 2}px)`;
   }
@@ -70,12 +86,26 @@ function cursorTransform(): string {
   return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
 }
 
+/** 缩放逆映射：把屏幕坐标（client）映射回捕获空间坐标；未缩放/无锚点时恒等 */
+function mapToCapture(p: Point, anchor: Point | null): Point {
+  const z = zoom.value;
+  if (z <= 0 || !anchor) return p;
+  return {
+    x: anchor.x + (p.x - anchor.x) / z,
+    y: anchor.y + (p.y - anchor.y) / z,
+    pressure: p.pressure,
+  };
+}
+const coordMapper = (p: Point): Point => mapToCapture(p, zoomAnchor.value);
+
 const drawing = useDrawing(
   {
     history: historyCanvas,
     preview: previewCanvas,
   },
   () => window.devicePixelRatio,
+  {},
+  { coordMapper },
 );
 
 /** 应用 config 中的默认工具/颜色/线宽（启动时与 config 变更时） */
@@ -178,6 +208,15 @@ function onPointerDown(e: PointerEvent) {
   // 其他工具点击画布：提交未完成的文字输入
   if (textEditing.value) commitText();
 
+  // 马赛克笔：底图未就绪时先截屏，本次点击不画
+  if (drawing.currentTool.value === "blur" && !drawing.hasBlurBase()) {
+    void ensureBlurBase();
+    return;
+  }
+
+  // 缩放模式下记录本次笔画的映射锚点（按下时刻光标位置，笔画中途固定）
+  zoomAnchor.value = { x: e.clientX, y: e.clientY };
+
   // 右键 = 按住擦除
   if (e.button === 2) {
     rmbErasing = true;
@@ -213,11 +252,11 @@ function onPointerLeave() {
 let textOpenedAt = 0;
 
 function openTextEditor(e: PointerEvent) {
-  const rect = previewCanvas.value?.getBoundingClientRect();
-  const x = e.clientX - (rect?.left ?? 0);
-  const y = e.clientY - (rect?.top ?? 0);
+  const x = e.clientX;
+  const y = e.clientY;
   textOpenedAt = Date.now();
-  textEditing.value = { x, y, value: "" };
+  // 记录屏幕坐标（输入框固定定位直接用）+ 缩放锚点（落笔时逆变换回捕获空间）
+  textEditing.value = { x, y, value: "", anchor: { x, y } };
   focusTextInput();
 }
 
@@ -251,7 +290,8 @@ function commitText(cancel = false) {
   if (!ed) return;
   textEditing.value = null;
   if (!cancel && ed.value.trim()) {
-    drawing.startText({ x: ed.x, y: ed.y } as Point, ed.value);
+    // 缩放模式下把屏幕坐标逆变换回捕获空间再落笔
+    drawing.startText(mapToCapture({ x: ed.x, y: ed.y }, ed.anchor), ed.value);
   }
 }
 
@@ -309,11 +349,21 @@ function onKeyDown(e: KeyboardEvent) {
     case "8":
       selectTool("text");
       break;
+    case "9":
+      selectTool("fading");
+      break;
+    case "0":
+      selectTool("blur");
+      break;
     case "q":
       cycleColor(-1);
       break;
     case "e":
       cycleColor(1);
+      break;
+    case "b":
+    case "B":
+      cycleBoard();
       break;
     case " ":
       e.preventDefault();
@@ -331,6 +381,15 @@ function onKeyDown(e: KeyboardEvent) {
     case "M":
       void toggleMagnifier();
       break;
+    case "z":
+    case "Z":
+      if (meta) {
+        drawing.undo();
+        showToast(t("action.undo"));
+      } else {
+        void toggleZoom();
+      }
+      break;
     case "s":
     case "S":
       if (!meta) void exportScreenshot();
@@ -342,13 +401,6 @@ function onKeyDown(e: KeyboardEvent) {
         showToast(t("action.clear"));
       }
       break;
-    case "z":
-    case "Z":
-      if (meta) {
-        drawing.undo();
-        showToast(t("action.undo"));
-      }
-      break;
     case "y":
     case "Y":
       if (meta) {
@@ -357,9 +409,11 @@ function onKeyDown(e: KeyboardEvent) {
       }
       break;
     case "Escape":
-      // 放大镜优先退出放大镜，其次退出标注
+      // 放大镜/缩放优先退出各自的模式，其次退出标注
       if (magnifier.value > 0) {
         toggleMagnifier();
+      } else if (zoom.value > 0) {
+        void toggleZoom();
       } else {
         exitDrawing();
       }
@@ -372,6 +426,10 @@ function selectTool(tool: Tool) {
   // 切到文字工具时收起未提交的输入框
   if (tool !== "text" && textEditing.value) {
     commitText(true);
+  }
+  // 马赛克笔：确保底图已就绪（未就绪则截屏一次）
+  if (tool === "blur") {
+    void ensureBlurBase();
   }
   updateCursorIcon();
 }
@@ -412,6 +470,8 @@ function toggleSpotlight() {
 // ---- 放大镜（ZoomIt 式：截屏底图 + CSS 缩放跟随光标）----
 async function toggleMagnifier() {
   if (magnifier.value === 0) {
+    // 与屏幕缩放互斥：开启放大镜时先退出缩放
+    if (zoom.value > 0) zoom.value = 0;
     // 开启：临时隐藏 UI 并截取屏幕底图
     const prevToolbar = showToolbar.value;
     const prevSpotlight = spotlight.value;
@@ -439,6 +499,100 @@ async function toggleMagnifier() {
   }
 }
 
+// ---- 屏幕缩放（冻结缩放：截屏底图 + CSS scale 跟随光标，可绘制）----
+async function toggleZoom() {
+  if (zoom.value === 0) {
+    // 与放大镜互斥：开启缩放时先退出放大镜
+    if (magnifier.value > 0) magnifier.value = 0;
+    const prevToolbar = showToolbar.value;
+    const prevSpotlight = spotlight.value;
+    showToolbar.value = false;
+    spotlight.value = false;
+    textEditing.value = null;
+
+    uiLocked = true;
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    try {
+      const base64 = await invoke<string>("capture_screen");
+      zoomBg.value = `data:image/png;base64,${base64}`;
+      zoom.value = 2;
+      showToast(t("action.zoom"));
+    } catch (err) {
+      console.error("zoom capture failed", err);
+      showToast(t("action.exportFailed"));
+    } finally {
+      uiLocked = false;
+      showToolbar.value = prevToolbar;
+      spotlight.value = prevSpotlight;
+    }
+  } else {
+    zoom.value = 0;
+  }
+}
+
+/** 滚轮调节缩放倍率（2 / 4 / 6 / 8，带 transition 顺滑切换） */
+function onWheel(e: WheelEvent) {
+  if (zoom.value <= 0) return;
+  e.preventDefault();
+  const levels = [2, 4, 6, 8];
+  const idx = levels.indexOf(zoom.value);
+  const next =
+    e.deltaY < 0
+      ? levels[Math.min(levels.length - 1, idx + 1)]
+      : levels[Math.max(0, idx - 1)];
+  if (next !== zoom.value) zoom.value = next;
+}
+
+// ---- 马赛克笔底图 ----
+let blurCaptureInFlight = false;
+
+/** 确保马赛克底图就绪：复用放大镜截屏流程（临时隐藏 UI → capture_screen → decode） */
+async function ensureBlurBase() {
+  if (drawing.hasBlurBase() || blurCaptureInFlight) return;
+  blurCaptureInFlight = true;
+  const prevToolbar = showToolbar.value;
+  const prevSpotlight = spotlight.value;
+  const prevText = textEditing.value;
+  showToolbar.value = false;
+  spotlight.value = false;
+  textEditing.value = null;
+
+  uiLocked = true;
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+  try {
+    const base64 = await invoke<string>("capture_screen");
+    const img = new Image();
+    img.src = `data:image/png;base64,${base64}`;
+    await img.decode();
+    drawing.setBlurBase(img);
+  } catch (err) {
+    console.error("blur base capture failed", err);
+    showToast(t("action.exportFailed"));
+  } finally {
+    uiLocked = false;
+    showToolbar.value = prevToolbar;
+    spotlight.value = prevSpotlight;
+    textEditing.value = prevText;
+    blurCaptureInFlight = false;
+  }
+}
+
+// ---- 黑白板模式 ----
+function cycleBoard() {
+  const next =
+    boardMode.value === "none"
+      ? "white"
+      : boardMode.value === "white"
+        ? "black"
+        : "none";
+  boardMode.value = next;
+  if (next !== "none") {
+    showToast(t(next === "white" ? "action.boardWhite" : "action.boardBlack"));
+  }
+}
+
 // ---- 导出截图 ----
 async function exportScreenshot() {
   if (exportInFlight) return;
@@ -446,46 +600,56 @@ async function exportScreenshot() {
   uiLocked = true;
   showToast(t("action.exporting"));
   try {
-    // 1. 临时隐藏 UI（工具栏/光标/聚光灯/放大镜/文字框）并请后端截取屏幕底图
-    const prevToolbar = showToolbar.value;
-    const prevSpotlight = spotlight.value;
-    const prevMagnifier = magnifier.value;
-    showToolbar.value = false;
-    spotlight.value = false;
-    magnifier.value = 0;
-    textEditing.value = null;
-
-    // 等一帧让 DOM 隐藏生效
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-    const base64 = await invoke<string>("capture_screen");
-
-    // 2. 恢复 UI
-    showToolbar.value = prevToolbar;
-    spotlight.value = prevSpotlight;
-    magnifier.value = prevMagnifier;
-
-    // 3. 合成：底图 + 已提交笔画
+    const isBoard = boardMode.value !== "none";
     const scale = window.devicePixelRatio;
     const cssW = window.innerWidth;
     const cssH = window.innerHeight;
-    const img = new Image();
-    img.src = `data:image/png;base64,${base64}`;
-    await img.decode();
-
     const composite = document.createElement("canvas");
     composite.width = Math.floor(cssW * scale);
     composite.height = Math.floor(cssH * scale);
     const ctx = composite.getContext("2d");
     if (!ctx) throw new Error("no 2d context");
-    ctx.drawImage(img, 0, 0, composite.width, composite.height);
+
+    let baseImg: HTMLImageElement | null = null;
+    if (isBoard) {
+      // 黑白板模式：底图直接用纯色填充，跳过截屏（省去窗口隐藏/恢复的闪烁）
+      ctx.fillStyle = boardMode.value === "white" ? "#ffffff" : "#000000";
+      ctx.fillRect(0, 0, composite.width, composite.height);
+    } else {
+      // 1. 临时隐藏 UI（工具栏/光标/聚光灯/放大镜/文字框）并请后端截取屏幕底图
+      const prevToolbar = showToolbar.value;
+      const prevSpotlight = spotlight.value;
+      const prevMagnifier = magnifier.value;
+      showToolbar.value = false;
+      spotlight.value = false;
+      magnifier.value = 0;
+      textEditing.value = null;
+
+      // 等一帧让 DOM 隐藏生效
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+      const base64 = await invoke<string>("capture_screen");
+
+      // 2. 恢复 UI
+      showToolbar.value = prevToolbar;
+      spotlight.value = prevSpotlight;
+      magnifier.value = prevMagnifier;
+
+      // 3. 合成：底图 + 已提交笔画
+      const img = new Image();
+      img.src = `data:image/png;base64,${base64}`;
+      await img.decode();
+      baseImg = img;
+      ctx.drawImage(img, 0, 0, composite.width, composite.height);
+    }
 
     // 笔画先画到独立透明层：橡皮用 destination-out 擦透明层只会擦掉笔画，
     // 直接画到底图上会打穿底图像素（导出 PNG 出现透明洞）。
     const drawLayer = document.createElement("canvas");
     drawLayer.width = composite.width;
     drawLayer.height = composite.height;
-    drawing.renderTo(drawLayer, cssW, cssH, scale);
+    // base 传入导出用新截屏，保证马赛克导出时用最新画面
+    drawing.renderTo(drawLayer, cssW, cssH, scale, baseImg);
     ctx.drawImage(drawLayer, 0, 0);
 
     // 4. 交给后端保存到图片目录
@@ -505,12 +669,20 @@ async function exitDrawing() {
   await invoke("exit_drawing");
 }
 
+/** 复位叠加态（黑白板 / 缩放），随清屏与模式切换一起重置 */
+function resetOverlayState() {
+  boardMode.value = "none";
+  zoom.value = 0;
+  zoomAnchor.value = null;
+}
+
 // ---- 事件监听（Rust → 前端）----
 async function setupListeners() {
   const { listen } = await import("@tauri-apps/api/event");
 
   clearListener = await listen<boolean>("clear-drawing", () => {
     drawing.hardReset();
+    resetOverlayState();
   });
 
   configListener = await listen<AppConfig>("config-changed", (e) => {
@@ -529,6 +701,7 @@ async function setupListeners() {
       requestAnimationFrame(() => {
         resizeCanvases();
         drawing.hardReset();
+        resetOverlayState();
         cursorVisible.value = true;
         showToolbar.value = true;
         isPenetrating.value = false;
@@ -541,6 +714,7 @@ async function setupListeners() {
       showToolbar.value = false;
       isPenetrating.value = false;
       drawing.hardReset();
+      resetOverlayState();
       // 退出标注时兜底落盘绘制预设
       flushPrefsSave();
     }
@@ -557,6 +731,8 @@ function updateCursorIcon() {
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("resize", resizeCanvases);
+  // 滚轮调缩放倍率：Vue 模板对 wheel 默认 passive，preventDefault 需手动非 passive 监听
+  window.addEventListener("wheel", onWheel, { passive: false });
   await setupListeners();
 
   // 加载 config 应用默认工具/颜色/线宽
@@ -590,6 +766,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("resize", resizeCanvases);
+  window.removeEventListener("wheel", onWheel);
   clearListener?.();
   modeListener?.();
   configListener?.();
@@ -613,10 +790,35 @@ onBeforeUnmount(() => {
     @pointerleave="onPointerLeave"
     @contextmenu.prevent
   >
-    <!-- 历史层：已提交笔画 -->
-    <canvas ref="historyCanvas" class="layer-canvas" />
-    <!-- 预览层：进行中笔画 -->
-    <canvas ref="previewCanvas" class="layer-canvas" />
+    <!-- 黑白板模式：纯色全屏底（z 轴最底，位于画布之下） -->
+    <div v-if="boardMode !== 'none'" class="board-layer" :class="boardMode" />
+
+    <!-- 缩放 / 普通布局：wrapper 恒存在，zoom>0 时整体放大（截图底图 + 双画布同一变换，笔画与画面视觉对齐） -->
+    <div
+      class="zoom-layer"
+      :style="
+        zoom > 0
+          ? {
+              transform: `scale(${zoom})`,
+              transformOrigin: `${cursorPos.x}px ${cursorPos.y}px`,
+            }
+          : undefined
+      "
+    >
+      <!-- 缩放底图：冻结的屏幕截图（1:1 铺满，随 wrapper 放大） -->
+      <div
+        v-if="zoom > 0 && zoomBg"
+        class="zoom-bg"
+        :style="{
+          backgroundImage: `url(${zoomBg})`,
+          backgroundSize: `${viewport.w}px ${viewport.h}px`,
+        }"
+      />
+      <!-- 历史层：已提交笔画 -->
+      <canvas ref="historyCanvas" class="layer-canvas" />
+      <!-- 预览层：进行中笔画 -->
+      <canvas ref="previewCanvas" class="layer-canvas" />
+    </div>
 
     <!-- 浮动工具栏 -->
     <ToolToolbar
@@ -630,6 +832,8 @@ onBeforeUnmount(() => {
       :penetrating="isPenetrating"
       :spotlight="spotlight"
       :magnifier="magnifier > 0"
+      :board="boardMode"
+      :zoom="zoom > 0"
       @select-tool="selectTool"
       @select-color="(c: string) => (drawing.currentColor.value = c)"
       @update-width="
@@ -643,6 +847,8 @@ onBeforeUnmount(() => {
       @export="exportScreenshot"
       @toggle-spotlight="toggleSpotlight"
       @toggle-magnifier="toggleMagnifier"
+      @toggle-board="cycleBoard"
+      @toggle-zoom="toggleZoom"
       @exit="exitDrawing"
     />
 
@@ -681,9 +887,9 @@ onBeforeUnmount(() => {
         transformOrigin: `${cursorPos.x}px ${cursorPos.y}px`,
       }"
     />
-    <!-- 放大镜聚焦环：提示当前放大中心 -->
+    <!-- 放大镜/缩放聚焦环：提示当前放大中心 -->
     <div
-      v-if="magnifier > 0"
+      v-if="magnifier > 0 || zoom > 0"
       class="magnifier-ring"
       :style="{ left: cursorPos.x + 'px', top: cursorPos.y + 'px' }"
     />
@@ -711,6 +917,21 @@ onBeforeUnmount(() => {
         }"
       />
     </div>
+    <!-- 马赛克笔：实线白圆 + 外黑描边 = 实际格子大小（与橡皮虚线区分） -->
+    <div
+      v-else-if="drawing.currentTool.value === 'blur'"
+      v-show="cursorVisible"
+      class="custom-cursor blur-cursor"
+      :style="{ transform: cursorTransform() }"
+    >
+      <div
+        class="blur-guide"
+        :style="{
+          width: drawing.lineWidth.value + 'px',
+          height: drawing.lineWidth.value + 'px',
+        }"
+      />
+    </div>
     <!-- 其他工具：SVG 图标光标 -->
     <div
       v-else
@@ -731,8 +952,13 @@ onBeforeUnmount(() => {
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <!-- 笔尖 -->
-        <template v-if="drawing.currentTool.value === 'pen'">
+        <!-- 笔尖（钢笔 / 渐隐笔共用） -->
+        <template
+          v-if="
+            drawing.currentTool.value === 'pen' ||
+            drawing.currentTool.value === 'fading'
+          "
+        >
           <!-- 斜 45° 的钢笔：笔尖朝左下，更像写字 -->
           <path d="M18.5 2.5 L21.5 5.5 L7.5 19.5 L3.5 20.5 L4.5 16.5 Z" />
           <path
@@ -789,6 +1015,38 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* ---- 黑白板模式：纯色全屏底（最底层） ---- */
+.board-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.board-layer.white {
+  background: #ffffff;
+}
+.board-layer.black {
+  background: #000000;
+}
+
+/* ---- 缩放层：截屏底图 + 双画布同一 wrapper（zoom>0 时整体放大） ---- */
+.zoom-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, transform-origin;
+  transition:
+    transform var(--duration-hover) var(--ease-default),
+    transform-origin 0.05s linear;
+}
+.zoom-bg {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: 0 0;
 }
 
 /* ---- 文字工具输入框 ---- */
@@ -883,6 +1141,23 @@ onBeforeUnmount(() => {
   transition:
     width var(--duration-spring) var(--ease-spring),
     height var(--duration-spring) var(--ease-spring);
+}
+
+/* 马赛克笔光标：实线白圆 + 外黑描边（与橡皮虚线区分） */
+.blur-cursor {
+  width: 0;
+  height: 0;
+  filter: none;
+}
+.blur-guide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 0 1.5px rgba(4, 6, 12, 0.85),
+    0 0 10px rgba(4, 6, 12, 0.4);
 }
 
 /* ---- Toast ---- */
