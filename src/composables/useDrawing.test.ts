@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ref } from "vue";
 import { useDrawing } from "./useDrawing";
+import { FADE_DURATION_MS } from "../constants/tools";
 import type { Point } from "./drawingTypes";
 
 /** 最小可用的 2D 上下文 mock：记录关键调用，不真正绘制 */
@@ -19,6 +20,8 @@ function createMockCtx() {
     strokeRect: vi.fn(() => calls.push("strokeRect")),
     ellipse: vi.fn(() => calls.push("ellipse")),
     fillText: vi.fn(() => calls.push("fillText")),
+    drawImage: vi.fn(() => calls.push("drawImage")),
+    getTransform: vi.fn(() => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })),
     save: vi.fn(() => calls.push("save")),
     restore: vi.fn(() => calls.push("restore")),
     set lineCap(_v: string) {},
@@ -30,6 +33,7 @@ function createMockCtx() {
     set fillStyle(_v: string) {},
     set globalAlpha(_v: number) {},
     set globalCompositeOperation(_v: string) {},
+    set imageSmoothingEnabled(_v: boolean) {},
     set font(_v: string) {},
     set textBaseline(_v: string) {},
     canvas: { width: 0, height: 0 },
@@ -266,5 +270,75 @@ describe("useDrawing 状态机", () => {
     const hl = drawing.lineWidth.value;
     drawing.currentTool.value = "pen";
     expect(drawing.lineWidth.value).toBeLessThan(hl);
+  });
+});
+
+describe("useDrawing 渐隐笔 / 马赛克笔", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("渐隐笔：过期后自动从 history 与撤销栈清除，canClear 变 false", () => {
+    // 假定时器推进时间，让渐隐轮询判定过期
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const { drawing } = setup();
+    drawing.currentTool.value = "fading";
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(30, 30));
+    drawing.endDraw();
+    expect(drawing.canClear.value).toBe(true);
+    expect(drawing.canUndo.value).toBe(true);
+
+    // 推进超过渐隐周期：轮询 tick 应移除过期笔画并清理撤销栈
+    vi.advanceTimersByTime(FADE_DURATION_MS + 1000);
+    flushRaf();
+
+    expect(drawing.canClear.value).toBe(false);
+    expect(drawing.canUndo.value).toBe(false);
+  });
+
+  it("渐隐笔：未过期时保持可撤销状态", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const { drawing } = setup();
+    drawing.currentTool.value = "fading";
+    drawing.startDraw(pointer(10, 10));
+    drawing.endDraw();
+    // 只推进 1 秒（< 3 秒渐隐周期），笔画应仍存在
+    vi.advanceTimersByTime(1000);
+    flushRaf();
+    expect(drawing.canClear.value).toBe(true);
+    expect(drawing.canUndo.value).toBe(true);
+  });
+
+  it("马赛克笔：setBlurBase 后绘制触发 drawImage 渲染", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(60, 60));
+    drawing.endDraw();
+    flushRaf();
+    expect(drawing.canClear.value).toBe(true);
+    expect(historyCtx.calls).toContain("drawImage");
+  });
+
+  it("马赛克笔：无底图时不抛错、不渲染", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.setBlurBase(null);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(50, 50));
+    drawing.endDraw();
+    flushRaf();
+    expect(drawing.canClear.value).toBe(true);
+    expect(historyCtx.calls).not.toContain("drawImage");
+  });
+
+  it("马赛克笔：hardReset 清空底图", () => {
+    const { drawing } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    expect(drawing.hasBlurBase()).toBe(true);
+    drawing.hardReset();
+    expect(drawing.hasBlurBase()).toBe(false);
   });
 });

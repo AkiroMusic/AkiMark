@@ -24,10 +24,18 @@ export const TOOL_DEFS: ToolDef[] = [
   { id: "circle", label: "tool.circle", hotkey: "6" },
   { id: "arrow", label: "tool.arrow", hotkey: "7" },
   { id: "text", label: "tool.text", hotkey: "8" },
+  { id: "fading", label: "tool.fading", hotkey: "9" },
+  { id: "blur", label: "tool.blur", hotkey: "0" },
 ];
 
 /** 线宽预设 */
 export const WIDTH_PRESETS = [1, 2, 3, 5, 8];
+
+/** 渐隐笔完整渐隐周期（ms） */
+export const FADE_DURATION_MS = 3000;
+
+/** 马赛克笔最小格子（CSS px） */
+export const BLUR_CELL_MIN = 3;
 
 /** 各工具线宽倍率（相对基础线宽）。形状/文字沿用 stroke 组。 */
 export const WIDTH_SCALE: Record<Tool, number> = {
@@ -39,6 +47,8 @@ export const WIDTH_SCALE: Record<Tool, number> = {
   circle: 1,
   arrow: 1,
   text: 1,
+  fading: 1,
+  blur: 1,
 };
 
 /** 荧光笔透明度 */
@@ -70,4 +80,6 @@ export const TOOL_WIDTH_GROUP: Record<
   circle: "stroke",
   arrow: "stroke",
   text: "stroke",
+  fading: "stroke",
+  blur: "stroke",
 };

@@ -1,4 +1,4 @@
-/** 工具类型：自由笔 + 形状 + 文字 */
+/** 工具类型：自由笔 + 形状 + 文字 + 渐隐笔 + 马赛克笔 */
 export type Tool =
   | "pen"
   | "highlighter"
@@ -7,7 +7,9 @@ export type Tool =
   | "rect"
   | "circle"
   | "arrow"
-  | "text";
+  | "text"
+  | "fading"
+  | "blur";
 
 /** 形状工具（拖拽定义两点） */
 export type ShapeTool = "rect" | "line" | "arrow" | "circle";
@@ -30,6 +32,8 @@ export interface DrawAction {
   text?: string;
   /** text 工具专用：字号（px） */
   fontSize?: number;
+  /** fading 渐隐笔专用：笔画诞生时刻（ms 时间戳），用于计算剩余透明度 */
+  bornAt?: number;
 }
 
 /** 线宽分组 */
