@@ -26,6 +26,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   logs dir (`install_log_facade` routes both Rust and frontend output there).
 - **Updater scaffolding** — `tauri-plugin-updater` wired with a signing keypair;
   publish endpoints are intentionally empty until a release host is configured.
+- **Fading pen (`9`)** — strokes fade out and are purged from history ~3s after
+  being drawn; the purge stays consistent with the undo/redo stacks.
+- **Blur / mosaic pen (`0`)** — pixelates the underlying screen along the stroke
+  path; the mosaic source is a fresh screenshot (taken lazily on first use) and
+  the export re-captures so the mosaic always reflects the current screen.
+- **Whiteboard / blackboard mode (`B`)** — toggles a plain white or black full-
+  screen board for free-hand lecturing; export skips the screen capture and
+  composites strokes onto the solid color instead.
+- **Screen zoom (`Z`)** — ZoomIt-style frozen 2x/4x/6x/8x zoom of the entire
+  overlay anchored at the cursor, with drawing still possible while zoomed
+  (cursor coordinates are inverse-mapped to the capture space at stroke start);
+  scroll to change the level, mutually exclusive with the magnifier.
+- **Updater endpoints** — `tauri.conf.json` now points the updater at
+  `https://github.com/AkiroMusic/AkiMark/releases/latest/download/latest.json`;
+  a bilingual release checklist (`RELEASE.md`) documents the full publish flow.
 
 ### Fixed
 
