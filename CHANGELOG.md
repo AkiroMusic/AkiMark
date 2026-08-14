@@ -24,8 +24,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fixing failed/blank exports on secondary or negative-coordinate monitors.
 - **File logging** — `log.rs` writes a daily `akimark.log` under the OS app-data
   logs dir (`install_log_facade` routes both Rust and frontend output there).
-- **Updater scaffolding** — `tauri-plugin-updater` wired with a signing keypair;
-  publish endpoints are intentionally empty until a release host is configured.
 - **Fading pen (`9`)** — strokes fade out and are purged from history ~3s after
   being drawn; the purge stays consistent with the undo/redo stacks.
 - **Blur / mosaic pen (`0`)** — pixelates the underlying screen along the stroke
@@ -38,9 +36,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   overlay anchored at the cursor, with drawing still possible while zoomed
   (cursor coordinates are inverse-mapped to the capture space at stroke start);
   scroll to change the level, mutually exclusive with the magnifier.
-- **Updater endpoints** — `tauri.conf.json` now points the updater at
-  `https://github.com/AkiroMusic/AkiMark/releases/latest/download/latest.json`;
-  a bilingual release checklist (`RELEASE.md`) documents the full publish flow.
+
+### Removed
+
+- **移除未生效的软件更新（Updater）功能** — `tauri-plugin-updater`、签名密钥、
+  更新端点与发布清单（`RELEASE.md`）一并移除；应用不再检查更新。
 
 ### Fixed
 

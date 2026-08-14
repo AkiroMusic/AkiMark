@@ -27,6 +27,7 @@ const en: Messages = {
   "action.exporting": "Exporting…",
   "action.exported": "Saved",
   "action.exportFailed": "Export failed",
+  "action.captureFailed": "Screen capture failed",
   "action.textPlaceholder": "Type text, Enter to place",
   "settings.title": "Settings",
   "settings.shortcuts": "Global Shortcuts",
@@ -56,7 +57,7 @@ const en: Messages = {
   "settings.helpGlobalClear": "Clear screen",
   "settings.helpGlobalPenetrate": "Toggle click-through",
   "settings.helpIn1":
-    "1-8: Pen / Highlighter / Eraser / Line / Rect / Circle / Arrow / Text · 9: Fading Pen · 0: Blur",
+    "1-8: Pen / Fading Pen / Highlighter / Eraser / Line / Rect / Circle / Arrow · 9: Text · 0: Blur",
   "settings.helpInQE": "Cycle color (previous / next)",
   "settings.helpInSpace": "Toggle toolbar",
   "settings.helpInX": "Toggle click-through",
@@ -82,15 +83,9 @@ const en: Messages = {
   "settings.exportDirDesc": "Where exported PNG screenshots are saved",
   "settings.exportDirChoose": "Choose folder…",
   "settings.exportDirDefault": "System Pictures (default)",
-  "settings.updates": "Updates",
-  "settings.checkUpdates": "Check for updates",
-  "settings.checking": "Checking for updates…",
-  "settings.upToDate": "You're up to date",
-  "settings.updateAvailable": "Update available: v{version}",
-  "settings.updateFailed": "Update check failed",
-  "settings.installUpdate": "Download & Install",
-  "settings.downloading": "Downloading…",
-  "settings.installReady": "Update downloaded — restart to install",
+  "settings.boardDefault": "Default board color",
+  "settings.boardWhite": "White",
+  "settings.boardBlack": "Black",
 };
 
 const zhCN: Messages = {
@@ -118,6 +113,7 @@ const zhCN: Messages = {
   "action.exporting": "正在导出…",
   "action.exported": "已保存",
   "action.exportFailed": "导出失败",
+  "action.captureFailed": "截屏失败",
   "action.textPlaceholder": "输入文字，回车放置",
   "settings.title": "设置",
   "settings.shortcuts": "全局快捷键",
@@ -146,7 +142,7 @@ const zhCN: Messages = {
   "settings.helpGlobalClear": "清屏",
   "settings.helpGlobalPenetrate": "切换穿透模式",
   "settings.helpIn1":
-    "1-8：画笔 / 荧光笔 / 橡皮 / 直线 / 矩形 / 圆形 / 箭头 / 文字 · 9：渐隐笔 · 0：马赛克笔",
+    "1-8：画笔 / 渐隐笔 / 荧光笔 / 橡皮 / 直线 / 矩形 / 圆形 / 箭头 · 9：文字 · 0：马赛克笔",
   "settings.helpInQE": "循环切换颜色（上一个 / 下一个）",
   "settings.helpInSpace": "显示 / 隐藏工具栏",
   "settings.helpInX": "切换穿透模式",
@@ -168,15 +164,9 @@ const zhCN: Messages = {
   "settings.exportDirDesc": "导出截图（PNG）的保存位置",
   "settings.exportDirChoose": "选择文件夹…",
   "settings.exportDirDefault": "系统图片目录（默认）",
-  "settings.updates": "软件更新",
-  "settings.checkUpdates": "检查更新",
-  "settings.checking": "正在检查更新…",
-  "settings.upToDate": "已是最新版本",
-  "settings.updateAvailable": "发现新版本：v{version}",
-  "settings.updateFailed": "检查更新失败",
-  "settings.installUpdate": "下载并安装",
-  "settings.downloading": "正在下载…",
-  "settings.installReady": "更新已下载，重启后生效",
+  "settings.boardDefault": "默认板书底色",
+  "settings.boardWhite": "白板",
+  "settings.boardBlack": "黑板",
 };
 
 const catalogs: Record<string, Messages> = {

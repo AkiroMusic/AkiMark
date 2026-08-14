@@ -92,10 +92,21 @@ function changeWidth(delta: number) {
   const next = Math.min(40, Math.max(1, Math.round(cur) + delta));
   emit("updateWidth", { [key]: next } as Record<string, number>);
 }
+
+/** 工具栏内任意按钮点击后失焦：避免按钮持焦时 Space 被按钮原生激活抢占，导致空格键无法切换工具栏 */
+function onToolbarClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null;
+  const btn = target?.closest("button");
+  if (btn) btn.blur();
+}
 </script>
 
 <template>
-  <div class="toolbar double-bezel" data-toolbar>
+  <div
+    class="toolbar double-bezel"
+    data-toolbar
+    @click.capture="onToolbarClick"
+  >
     <!-- 工具组 -->
     <div class="toolbar-group" role="toolbar">
       <button
@@ -204,7 +215,9 @@ function changeWidth(delta: number) {
       <button
         class="mini-btn"
         :class="{ active: board !== 'none' }"
-        :title="board === 'black' ? t('action.boardBlack') : t('action.boardWhite')"
+        :title="
+          board === 'black' ? t('action.boardBlack') : t('action.boardWhite')
+        "
         @click="emit('toggleBoard')"
       >
         <svg

@@ -29,6 +29,8 @@ export interface GeneralConfig {
     | "fading"
     | "blur";
   defaultColor: string;
+  /** 默认板书底色（白板 / 黑板） */
+  boardDefault: "white" | "black";
   openSettingsOnStartup: boolean;
   exportDir: string | null;
 }

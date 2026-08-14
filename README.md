@@ -17,14 +17,13 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🖌️ **Ten tools** — Pen, highlighter, eraser, line, rectangle, circle, arrow, text, fading pen, blur.
 - 🎨 **8-color palette** — Quick color cycling with Q/E.
 - 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
-- ⏳ **Fading pen** — Strokes dissolve automatically ~3s after being drawn (press `9`); perfect for transient emphasis.
+- ⏳ **Fading pen** — Strokes dissolve automatically ~3s after being drawn (press `2`); perfect for transient emphasis.
 - 🧊 **Blur (mosaic) pen** — Pixelate regions of the underlying screen along the stroke path (press `0`).
 - 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`).
 - 🔎 **Magnifier** — ZoomIt-style 2x/4x screen magnifier (press `M`).
 - 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board for free-hand lecturing (press `B`; export skips the screen capture).
 - 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `Z`; scroll to change the level).
 - 📸 **Export screenshot** — Composite annotations onto the underlying screen and save as PNG (press `S` or the toolbar button; custom export folder).
-- 🔄 **Auto-update** — In-app update checks wired to GitHub Releases (signing keypair in place; first public release must ship the `.sig` + `latest.json` assets).
 - ↩️ **Undo / Redo / Clear** — Full history stack.
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
@@ -55,10 +54,10 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 | Shortcut | Action |
 |---|---|
-| `1` / `2` / `3` | Pen / Highlighter / Eraser |
-| `4` / `5` / `6` | Line / Rectangle / Circle |
-| `7` / `8` | Arrow / Text |
-| `9` / `0` | Fading pen / Blur |
+| `1` / `2` / `3` | Pen / Fading pen / Highlighter |
+| `4` / `5` / `6` | Eraser / Line / Rectangle |
+| `7` / `8` | Circle / Arrow |
+| `9` / `0` | Text / Blur |
 | `Q` / `E` | Cycle color |
 | `F` | Toggle spotlight |
 | `M` | Toggle magnifier (2x / 4x) |
@@ -152,6 +151,7 @@ Settings are persisted as JSON in the OS app-config directory (`%APPDATA%\com.ak
     "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
     "defaultColor": "#6C8CFF",
+    "boardDefault": "white",
     "openSettingsOnStartup": true,
     "exportDir": null
   }
@@ -202,14 +202,13 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🖌️ **十种工具** — 画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字、渐隐笔、马赛克笔。
 - 🎨 **8 色调色板** — 用 Q/E 快速循环切换颜色。
 - 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
-- ⏳ **渐隐笔** — 笔画绘制约 3 秒后自动溶解消失（按 `9`）；适合临时强调。
+- ⏳ **渐隐笔** — 笔画绘制约 3 秒后自动溶解消失（按 `2`）；适合临时强调。
 - 🧊 **马赛克笔** — 沿笔画路径将底层屏幕画面打上马赛克（按 `0`）。
 - 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`）。
 - 🔎 **放大镜** — ZoomIt 式 2x / 4x 屏幕放大镜（按 `M`）。
 - 🧑‍🏫 **白板 / 黑板模式** — 一键切换纯白 / 纯黑板书底，自由板书（按 `B`；导出时跳过截屏）。
 - 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `Z`；滚轮调整倍率）。
 - 📸 **导出截图** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录）。
-- 🔄 **自动更新** — 应用内更新检查已接通 GitHub Releases（签名密钥已就绪；首次公开发版需随包上传 `.sig` 与 `latest.json`）。
 - ↩️ **撤销 / 重做 / 清屏** — 完整的历史操作栈。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
@@ -240,10 +239,10 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 | 快捷键 | 操作 |
 |---|---|
-| `1` / `2` / `3` | 画笔 / 荧光笔 / 橡皮 |
-| `4` / `5` / `6` | 直线 / 矩形 / 圆形 |
-| `7` / `8` | 箭头 / 文字 |
-| `9` / `0` | 渐隐笔 / 马赛克笔 |
+| `1` / `2` / `3` | 画笔 / 渐隐笔 / 荧光笔 |
+| `4` / `5` / `6` | 橡皮 / 直线 / 矩形 |
+| `7` / `8` | 圆形 / 箭头 |
+| `9` / `0` | 文字 / 马赛克笔 |
 | `Q` / `E` | 循环切换颜色 |
 | `F` | 开关聚光灯 |
 | `M` | 开关放大镜（2x / 4x） |
@@ -337,6 +336,7 @@ npm run icon         # 从 assets/icon-1024.png 生成
     "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
     "defaultColor": "#6C8CFF",
+    "boardDefault": "white",
     "openSettingsOnStartup": true,
     "exportDir": null
   }
