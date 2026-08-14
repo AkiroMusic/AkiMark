@@ -1,6 +1,6 @@
 {
   "name": "akimark",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AkiMark - 轻量级屏幕标注工具（Ethereal Glass）",
   "private": true,
   "type": "module",
