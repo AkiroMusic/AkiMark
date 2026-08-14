@@ -532,7 +532,7 @@ async function save() {
 
         <h3 class="help-sub">{{ t("settings.helpInApp") }}</h3>
         <div class="help-row">
-          <kbd class="help-kbd font-mono">1–8</kbd>
+          <kbd class="help-kbd font-mono">1–0</kbd>
           <span class="help-desc">{{ t("settings.helpIn1") }}</span>
         </div>
         <div class="help-row">

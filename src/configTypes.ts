@@ -25,7 +25,9 @@ export interface GeneralConfig {
     | "rect"
     | "circle"
     | "arrow"
-    | "text";
+    | "text"
+    | "fading"
+    | "blur";
   defaultColor: string;
   openSettingsOnStartup: boolean;
   exportDir: string | null;
