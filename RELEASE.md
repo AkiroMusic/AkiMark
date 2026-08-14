@@ -28,7 +28,28 @@ npm run build
 
 - `AkiMark_{version}_x64-setup.exe` —— NSIS 安装包
 - `AkiMark_{version}_x64-setup.exe.sig` —— minisign 签名（自动更新校验用，**缺一不可**）
-- `AkiMark_{version}_x64-setup.exe.json` —— 更新清单（内含版本号、签名引用与安装包下载 url，**缺一不可**）
+- `latest.json` —— 更新清单（**需手动构建**，见下；内含版本号、签名引用与安装包下载 url，**缺一不可**）
+
+> ⚠️ Tauri v2 的 `createUpdaterArtifacts: true` **只自动生成安装包与 `.sig`**，**不会**生成 `.json` 更新清单——`latest.json` 必须手动构建并上传（格式见 Tauri 文档 [Static JSON File Format](https://v2.tauri.app/plugin/updater/#static-json-file-format)）。构建示例（`signature` 取自 `.sig` 文件内容）：
+
+```bash
+node -e "
+const fs = require('fs');
+const sig = fs.readFileSync('src-tauri/target/release/bundle/nsis/AkiMark_${version}_x64-setup.exe.sig', 'utf8').trim();
+const manifest = {
+  version: '${version}',
+  notes: '版本说明',
+  pub_date: new Date().toISOString(),
+  platforms: {
+    'windows-x86_64': {
+      signature: sig,
+      url: 'https://github.com/AkiroMusic/AkiMark/releases/download/v${version}/AkiMark_${version}_x64-setup.exe'
+    }
+  }
+};
+fs.writeFileSync('src-tauri/target/release/bundle/nsis/latest.json', JSON.stringify(manifest, null, 2));
+"
+```
 
 ## 3. 版本号
 
@@ -45,20 +66,20 @@ npm run build
 gh release create v{version} --title "v{version}" --notes "..."
 ```
 
-上传产物（**必须**把 .json 同时以 `latest.json` 名义上传，这样 `/releases/latest/download/latest.json` 始终指向最新版，旧版本也能发现新版本）：
+上传产物（**必须**把手动构建的 `latest.json` 也上传，这样 `/releases/latest/download/latest.json` 始终指向最新版，旧版本也能发现新版本）：
 
 ```bash
 gh release upload v{version} \
   src-tauri/target/release/bundle/nsis/AkiMark_{version}_x64-setup.exe \
   src-tauri/target/release/bundle/nsis/AkiMark_{version}_x64-setup.exe.sig \
-  "src-tauri/target/release/bundle/nsis/AkiMark_{version}_x64-setup.exe.json#latest.json"
+  src-tauri/target/release/bundle/nsis/latest.json
 ```
 
 ### 方式二：网页手动上传
 
 1. GitHub → Releases → **Draft a new release**，Tag 填 `v{version}`
 2. 上传 `AkiMark_{version}_x64-setup.exe` 与同名 `.sig`
-3. 把 `AkiMark_{version}_x64-setup.exe.json` 重命名为 `latest.json` 后上传
+3. 上传手动构建的 `latest.json`（文件名就叫 `latest.json`）
 
 ## 5. 验证
 
@@ -69,5 +90,5 @@ gh release upload v{version} \
 
 - `.sig` 与 `.json` 缺一不可：Tauri 会同时校验安装包签名与更新清单，缺任何一个都会导致更新失败。
 - 密码忘记将无法签名（见第 1 节）。
-- `endpoints` 指向固定的 `latest.json`，每次发版时用新版本的 `.json` 覆盖上传即可，无需改动 `tauri.conf.json`（JSON 内记录了版本号，客户端据此判断是否有新版本）。
+- `endpoints` 指向固定的 `latest.json`，每次发版时用新版本的 `latest.json` 覆盖上传即可，无需改动 `tauri.conf.json`（JSON 内记录了版本号，客户端据此判断是否有新版本）。
 - 更新清单内的 `url` 字段指向安装包，必须公网可访问——GitHub Release 资产天然满足。
