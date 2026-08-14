@@ -9,68 +9,6 @@ import type { Tool } from "./composables/drawingTypes";
 
 const { t } = useI18n();
 
-/** 更新对象挂到 window 上，供手动下载按钮复用（避免重复 import check） */
-declare global {
-  interface Window {
-    __akimark_update?: {
-      version: string;
-      downloadAndInstall: () => Promise<void>;
-    };
-  }
-}
-
-// ---- 更新状态 ----
-type UpdateStatus =
-  | { state: "idle" }
-  | { state: "checking" }
-  | { state: "upToDate" }
-  | { state: "available"; version: string }
-  | { state: "downloading" }
-  | { state: "ready" }
-  | { state: "failed" };
-const updateStatus = ref<UpdateStatus>({ state: "idle" });
-const updateChecking = ref(false);
-
-/** 从 @tauri-apps/plugin-updater 动态导入 check（避免覆盖层 bundle 加载无关代码） */
-async function checkForUpdates(manual = false) {
-  if (updateChecking.value) return;
-  updateChecking.value = true;
-  if (manual) updateStatus.value = { state: "checking" };
-  try {
-    const { check } = await import("@tauri-apps/plugin-updater");
-    const update = await check();
-    if (update) {
-      updateStatus.value = {
-        state: "available",
-        version: update.version,
-      };
-      // 静默发现新版本时提示用户（已是最新则无感知）
-      window.__akimark_update = update;
-    } else if (manual) {
-      updateStatus.value = { state: "upToDate" };
-    }
-  } catch (e) {
-    console.warn("[akimark] 检查更新失败:", e);
-    if (manual) updateStatus.value = { state: "failed" };
-  } finally {
-    updateChecking.value = false;
-  }
-}
-
-async function downloadUpdate() {
-  const update = window.__akimark_update;
-  if (!update) return;
-  updateStatus.value = { state: "downloading" };
-  try {
-    await update.downloadAndInstall();
-    updateStatus.value = { state: "ready" };
-    window.__akimark_update = undefined;
-  } catch (e) {
-    console.warn("[akimark] 下载更新失败:", e);
-    updateStatus.value = { state: "failed" };
-  }
-}
-
 // ---- 表单状态 ----
 const shortcuts = reactive<Shortcuts>({
   toggleDrawing: "Ctrl+Shift+R",
@@ -80,6 +18,8 @@ const shortcuts = reactive<Shortcuts>({
 
 const defaultTool = ref<Tool>("pen");
 const defaultColor = ref(DEFAULT_COLOR);
+/** 默认画布：white = 白板，black = 黑板 */
+const boardDefault = ref<"white" | "black">("white");
 const lineWidths = reactive({ stroke: 3, highlighter: 10, eraser: 12 });
 const autostart = ref(false);
 const openSettingsOnStartup = ref(true);
@@ -134,6 +74,7 @@ onMounted(async () => {
     shortcuts.togglePenetration = cfg.shortcuts.togglePenetration;
     defaultTool.value = cfg.general.defaultTool;
     defaultColor.value = cfg.general.defaultColor;
+    boardDefault.value = cfg.general.boardDefault ?? "white";
     lineWidths.stroke = cfg.general.lineWidths.stroke;
     lineWidths.highlighter = cfg.general.lineWidths.highlighter;
     lineWidths.eraser = cfg.general.lineWidths.eraser;
@@ -157,9 +98,6 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-
-  // 静默检查更新（失败无感知，仅手动检查才显示错误）
-  checkForUpdates(false);
 });
 
 // ---- 快捷键录制 ----
@@ -274,6 +212,7 @@ async function save() {
         lineWidths: { ...lineWidths },
         defaultTool: defaultTool.value,
         defaultColor: defaultColor.value,
+        boardDefault: boardDefault.value,
         openSettingsOnStartup: openSettingsOnStartup.value,
         exportDir: exportDir.value,
       },
@@ -381,6 +320,24 @@ async function save() {
           />
         </div>
 
+        <h2 class="section-title">{{ t("settings.boardDefault") }}</h2>
+        <div class="tool-row">
+          <button
+            class="tool-chip"
+            :class="{ active: boardDefault === 'white' }"
+            @click="boardDefault = 'white'"
+          >
+            {{ t("settings.boardWhite") }}
+          </button>
+          <button
+            class="tool-chip"
+            :class="{ active: boardDefault === 'black' }"
+            @click="boardDefault = 'black'"
+          >
+            {{ t("settings.boardBlack") }}
+          </button>
+        </div>
+
         <h2 class="section-title">{{ t("settings.lineWidths") }}</h2>
         <div class="width-row">
           <label class="width-field">
@@ -452,65 +409,6 @@ async function save() {
       <p v-if="errorMsg" class="error-text">
         {{ isI18nErrorKey(errorMsg) ? t(`settings.${errorMsg}`) : errorMsg }}
       </p>
-
-      <!-- 软件更新 -->
-      <section class="section double-bezel">
-        <h2 class="section-title">{{ t("settings.updates") }}</h2>
-        <div class="update-row">
-          <div class="update-status">
-            <template v-if="updateStatus.state === 'checking'">
-              <span class="update-spinner" aria-hidden="true"></span>
-              <span>{{ t("settings.checking") }}</span>
-            </template>
-            <template v-else-if="updateStatus.state === 'upToDate'">
-              <span class="update-ok" aria-hidden="true">✓</span>
-              <span>{{ t("settings.upToDate") }}</span>
-            </template>
-            <template v-else-if="updateStatus.state === 'available'">
-              <span class="update-ok" aria-hidden="true">⬇</span>
-              <span>
-                {{
-                  t("settings.updateAvailable").replace(
-                    "{version}",
-                    updateStatus.version,
-                  )
-                }}
-              </span>
-            </template>
-            <template v-else-if="updateStatus.state === 'downloading'">
-              <span class="update-spinner" aria-hidden="true"></span>
-              <span>{{ t("settings.downloading") }}</span>
-            </template>
-            <template v-else-if="updateStatus.state === 'ready'">
-              <span class="update-ok" aria-hidden="true">✓</span>
-              <span>{{ t("settings.installReady") }}</span>
-            </template>
-            <template v-else-if="updateStatus.state === 'failed'">
-              <span class="update-err" aria-hidden="true">✕</span>
-              <span>{{ t("settings.updateFailed") }}</span>
-            </template>
-          </div>
-          <button
-            v-if="
-              updateStatus.state === 'available' ||
-              updateStatus.state === 'downloading'
-            "
-            class="update-btn"
-            :disabled="updateStatus.state === 'downloading'"
-            @click="downloadUpdate"
-          >
-            {{ t("settings.installUpdate") }}
-          </button>
-          <button
-            v-else
-            class="update-btn ghost"
-            :disabled="updateStatus.state === 'checking'"
-            @click="checkForUpdates(true)"
-          >
-            {{ t("settings.checkUpdates") }}
-          </button>
-        </div>
-      </section>
 
       <!-- 快捷键 / 功能一览 -->
       <section class="section double-bezel">
@@ -941,43 +839,6 @@ async function save() {
   padding: 0 var(--space-1);
 }
 
-/* ---- 软件更新 ---- */
-.update-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  justify-content: space-between;
-}
-.update-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.update-spinner {
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-full);
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.update-ok {
-  color: var(--success);
-  font-size: 13px;
-  line-height: 1;
-}
-.update-err {
-  color: var(--error);
-  font-size: 13px;
-  line-height: 1;
-}
 .update-btn {
   flex-shrink: 0;
   padding: 6px 14px;

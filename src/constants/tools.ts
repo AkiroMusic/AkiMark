@@ -12,19 +12,19 @@ export interface ToolDef {
 
 export const TOOL_DEFS: ToolDef[] = [
   { id: "pen", label: "tool.pen", hotkey: "1" },
+  { id: "fading", label: "tool.fading", hotkey: "2" },
   {
     id: "highlighter",
     label: "tool.highlighter",
-    hotkey: "2",
+    hotkey: "3",
     translucent: true,
   },
-  { id: "eraser", label: "tool.eraser", hotkey: "3" },
-  { id: "line", label: "tool.line", hotkey: "4" },
-  { id: "rect", label: "tool.rect", hotkey: "5" },
-  { id: "circle", label: "tool.circle", hotkey: "6" },
-  { id: "arrow", label: "tool.arrow", hotkey: "7" },
-  { id: "text", label: "tool.text", hotkey: "8" },
-  { id: "fading", label: "tool.fading", hotkey: "9" },
+  { id: "eraser", label: "tool.eraser", hotkey: "4" },
+  { id: "line", label: "tool.line", hotkey: "5" },
+  { id: "rect", label: "tool.rect", hotkey: "6" },
+  { id: "circle", label: "tool.circle", hotkey: "7" },
+  { id: "arrow", label: "tool.arrow", hotkey: "8" },
+  { id: "text", label: "tool.text", hotkey: "9" },
   { id: "blur", label: "tool.blur", hotkey: "0" },
 ];
 

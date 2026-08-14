@@ -54,6 +54,8 @@ pub struct GeneralConfig {
     pub default_tool: String,
     /// 默认笔色（hex）
     pub default_color: String,
+    /// 默认板书底色（white / black，对应白板 / 黑板模式）
+    pub board_default: String,
     /// 是否在启动时打开设置窗口（托盘常驻，设置用完即毁）
     pub open_settings_on_startup: bool,
     /// 导出目录；None = 系统图片目录
@@ -69,6 +71,7 @@ impl Default for GeneralConfig {
             line_widths: LineWidthsConfig::default(),
             default_tool: "pen".into(),
             default_color: "#6C8CFF".into(),
+            board_default: "white".into(),
             open_settings_on_startup: true,
             export_dir: None,
         }
@@ -141,6 +144,7 @@ mod tests {
         assert_eq!(cfg.shortcuts.toggle_penetration, "Ctrl+Shift+X");
         assert_eq!(cfg.general.default_tool, "pen");
         assert_eq!(cfg.general.default_color, "#6C8CFF");
+        assert_eq!(cfg.general.board_default, "white");
         assert_eq!(cfg.general.line_widths.stroke, 3.0);
         assert_eq!(cfg.general.line_widths.highlighter, 10.0);
         assert_eq!(cfg.general.line_widths.eraser, 12.0);
@@ -159,6 +163,7 @@ mod tests {
             general: GeneralConfig {
                 default_tool: "highlighter".into(),
                 default_color: "#F0A0D8".into(),
+                board_default: "black".into(),
                 line_widths: LineWidthsConfig {
                     stroke: 5.0,
                     highlighter: 22.0,
@@ -183,6 +188,10 @@ mod tests {
             "缺少 toggleDrawing: {json}"
         );
         assert!(json.contains("\"defaultTool\""), "缺少 defaultTool: {json}");
+        assert!(
+            json.contains("\"boardDefault\""),
+            "缺少 boardDefault: {json}"
+        );
         assert!(
             json.contains("\"openSettingsOnStartup\""),
             "缺少 openSettingsOnStartup: {json}"
@@ -215,5 +224,6 @@ mod tests {
         assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Shift+R");
         assert_eq!(cfg.general.locale, "en");
         assert_eq!(cfg.general.default_tool, "pen");
+        assert_eq!(cfg.general.board_default, "white");
     }
 }

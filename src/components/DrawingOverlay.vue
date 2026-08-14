@@ -46,6 +46,8 @@ const viewport = reactive({ w: window.innerWidth, h: window.innerHeight });
 
 // 黑白板模式：无 / 白板 / 黑板（纯色底，导出时免截屏）
 const boardMode = ref<"none" | "white" | "black">("none");
+// 默认板书底色（配置项 boardDefault）：cycleBoard 从该色开始循环
+const boardDefault = ref<"white" | "black">("white");
 
 // 屏幕缩放（冻结缩放，ZoomIt Ctrl+1 式）：0 = 关闭 / 2 / 4 / 6 / 8
 const zoom = ref(0);
@@ -117,6 +119,7 @@ function applyConfig(cfg: AppConfig) {
   applyingConfig = true;
   drawing.currentTool.value = cfg.general.defaultTool;
   drawing.currentColor.value = cfg.general.defaultColor;
+  boardDefault.value = cfg.general.boardDefault ?? "white";
   drawing.lineWidths.value = {
     stroke: cfg.general.lineWidths.stroke,
     highlighter: cfg.general.lineWidths.highlighter,
@@ -311,7 +314,8 @@ function isOverToolbar(e: PointerEvent): boolean {
 function onKeyDown(e: KeyboardEvent) {
   // 截屏导出期间锁定快捷键
   if (uiLocked) return;
-  const k = e.key;
+  // 空格键兼容：标准环境 key 为 " "，个别环境为 "Space"（IME 组合期间为 "Process"，由 isComposing 拦截）
+  const k = e.key === " " || e.code === "Space" ? " " : e.key;
   const meta = e.ctrlKey || e.metaKey;
 
   // 文字输入框激活时：Enter 提交、Esc 取消，其余键不拦截
@@ -329,28 +333,28 @@ function onKeyDown(e: KeyboardEvent) {
       selectTool("pen");
       break;
     case "2":
-      selectTool("highlighter");
+      selectTool("fading");
       break;
     case "3":
-      selectTool("eraser");
+      selectTool("highlighter");
       break;
     case "4":
-      selectTool("line");
+      selectTool("eraser");
       break;
     case "5":
-      selectTool("rect");
+      selectTool("line");
       break;
     case "6":
-      selectTool("circle");
+      selectTool("rect");
       break;
     case "7":
-      selectTool("arrow");
+      selectTool("circle");
       break;
     case "8":
-      selectTool("text");
+      selectTool("arrow");
       break;
     case "9":
-      selectTool("fading");
+      selectTool("text");
       break;
     case "0":
       selectTool("blur");
@@ -366,8 +370,10 @@ function onKeyDown(e: KeyboardEvent) {
       cycleBoard();
       break;
     case " ":
+      // 组合输入（IME）期间不拦截空格
+      if (e.isComposing) break;
       e.preventDefault();
-      showToolbar.value = !showToolbar.value;
+      toggleToolbarWithSpace();
       break;
     case "x":
     case "X":
@@ -459,6 +465,21 @@ async function togglePenetration() {
   showToolbar.value = false;
 }
 
+/**
+ * 空格键切换工具栏显隐。
+ * 穿透模式下工具栏即使显示也无法交互（鼠标事件穿透到下层应用），
+ * 因此按空格时显式退出穿透并显示工具栏，保证工具栏可见可点，行为最不意外。
+ */
+function toggleToolbarWithSpace() {
+  if (isPenetrating.value) {
+    isPenetrating.value = false;
+    void invoke("exit_penetration_mode").catch(() => {});
+    showToolbar.value = true;
+    return;
+  }
+  showToolbar.value = !showToolbar.value;
+}
+
 // ---- 聚光灯 ----
 function toggleSpotlight() {
   spotlight.value = !spotlight.value;
@@ -488,7 +509,7 @@ async function toggleMagnifier() {
       magnifier.value = 2;
     } catch (err) {
       console.error("magnifier capture failed", err);
-      showToast(t("action.exportFailed"));
+      showToast(t("action.captureFailed"));
     } finally {
       uiLocked = false;
       showToolbar.value = prevToolbar;
@@ -520,7 +541,7 @@ async function toggleZoom() {
       showToast(t("action.zoom"));
     } catch (err) {
       console.error("zoom capture failed", err);
-      showToast(t("action.exportFailed"));
+      showToast(t("action.captureFailed"));
     } finally {
       uiLocked = false;
       showToolbar.value = prevToolbar;
@@ -569,7 +590,7 @@ async function ensureBlurBase() {
     drawing.setBlurBase(img);
   } catch (err) {
     console.error("blur base capture failed", err);
-    showToast(t("action.exportFailed"));
+    showToast(t("action.captureFailed"));
   } finally {
     uiLocked = false;
     showToolbar.value = prevToolbar;
@@ -581,11 +602,14 @@ async function ensureBlurBase() {
 
 // ---- 黑白板模式 ----
 function cycleBoard() {
+  // 从配置的默认底色开始循环：none -> boardDefault -> 另一色 -> none
+  const other: "white" | "black" =
+    boardDefault.value === "white" ? "black" : "white";
   const next =
     boardMode.value === "none"
-      ? "white"
-      : boardMode.value === "white"
-        ? "black"
+      ? boardDefault.value
+      : boardMode.value === boardDefault.value
+        ? other
         : "none";
   boardMode.value = next;
   if (next !== "none") {

@@ -28,7 +28,6 @@
     "vue-tsc": "^3.2.6"
   },
   "dependencies": {
-    "@tauri-apps/plugin-dialog": "^2.7.2",
-    "@tauri-apps/plugin-updater": "^2.10.1"
+    "@tauri-apps/plugin-dialog": "^2.7.2"
   }
 }
