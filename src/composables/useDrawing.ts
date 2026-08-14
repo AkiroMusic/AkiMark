@@ -2,7 +2,9 @@ import { computed, ref, watch } from "vue";
 import type { Ref } from "vue";
 import type { DrawAction, LineWidths, Point, Tool } from "./drawingTypes";
 import {
+  BLUR_CELL_MIN,
   ERASER_OPACITY,
+  FADE_DURATION_MS,
   HIGHLIGHTER_OPACITY,
   PEN_OPACITY,
   SHAPE_TOOLS,
@@ -14,6 +16,12 @@ import { DEFAULT_COLOR } from "../constants/colors";
 
 /** 最大画布像素（防超大显示器 OOM） */
 const MAX_CANVAS_PIXELS = 6_000_000;
+
+/** 渐隐笔清理/渐隐动画的轮询周期（ms） */
+const FADE_TICK_MS = 250;
+
+/** 马赛克底图（屏幕截屏）：模块级共享，导出时可用新截屏临时替换 */
+let blurBase: CanvasImageSource | null = null;
 
 interface UndoEntry {
   type: "add" | "remove" | "clear";
@@ -41,6 +49,7 @@ export function useDrawing(
   refs: CanvasRefs,
   getDPR: () => number,
   initial: { tool?: Tool; color?: string; lineWidths?: LineWidths } = {},
+  opts: { coordMapper?: (p: Point) => Point } = {},
 ) {
   const currentTool = ref<Tool>(initial.tool ?? "pen");
   const currentColor = ref(initial.color ?? DEFAULT_COLOR);
@@ -126,9 +135,15 @@ export function useDrawing(
   /** 点坐标换算到 CSS 像素 */
   function toCssPoint(e: PointerEvent | MouseEvent): Point {
     const rect = refs.preview.value?.getBoundingClientRect();
-    const p = {
-      x: e.clientX - (rect?.left ?? 0),
-      y: e.clientY - (rect?.top ?? 0),
+    // 缩放模式下 canvas 被 transform 缩放，getBoundingClientRect 会返回变换后的盒；
+    // 此时以布局基准（overlay 原点 0,0）直接取 client 坐标，再交给 coordMapper
+    // 逆变换回捕获空间，避免变换盒导致的偏移。
+    const hasMapper = opts.coordMapper != null;
+    const baseX = hasMapper ? 0 : (rect?.left ?? 0);
+    const baseY = hasMapper ? 0 : (rect?.top ?? 0);
+    const p0 = {
+      x: e.clientX - baseX,
+      y: e.clientY - baseY,
     } as Point;
     // 数位板压感：仅 pen 指针类型参与调制（鼠标 pressure 恒 0.5 排除，笔压到 0.5 不被误排除）
     const pe = e as PointerEvent;
@@ -137,9 +152,18 @@ export function useDrawing(
       typeof pe.pressure === "number" &&
       pe.pressure > 0
     ) {
-      p.pressure = pe.pressure;
+      p0.pressure = pe.pressure;
     }
-    return p;
+    return opts.coordMapper ? opts.coordMapper(p0) : p0;
+  }
+
+  /** 当前透明度：渐隐笔随时间衰减，其余工具恒为原始值 */
+  function actionOpacity(action: DrawAction): number {
+    if (action.tool === "fading" && action.bornAt !== undefined) {
+      const remain = 1 - (Date.now() - action.bornAt) / FADE_DURATION_MS;
+      return action.opacity * Math.max(0, remain);
+    }
+    return action.opacity;
   }
 
   /** 二次贝塞尔中点平滑绘制一段（荧光笔/橡皮：固定宽度） */
@@ -211,7 +235,7 @@ export function useDrawing(
     const [a, b] = action.points;
     if (!a || !b) return;
     ctx.save();
-    ctx.globalAlpha = action.opacity;
+    ctx.globalAlpha = actionOpacity(action);
     ctx.strokeStyle = action.color;
     ctx.lineWidth = action.lineWidth;
     ctx.strokeRect(
@@ -231,7 +255,7 @@ export function useDrawing(
     const ry = Math.abs(b.y - a.y) / 2;
     if (rx < 0.25 && ry < 0.25) return;
     ctx.save();
-    ctx.globalAlpha = action.opacity;
+    ctx.globalAlpha = actionOpacity(action);
     ctx.strokeStyle = action.color;
     ctx.lineWidth = action.lineWidth;
     ctx.beginPath();
@@ -245,7 +269,7 @@ export function useDrawing(
     const [a, b] = action.points;
     if (!a || !b) return;
     ctx.save();
-    ctx.globalAlpha = action.opacity;
+    ctx.globalAlpha = actionOpacity(action);
     ctx.strokeStyle = action.color;
     ctx.lineWidth = action.lineWidth;
     ctx.lineCap = "round";
@@ -280,13 +304,69 @@ export function useDrawing(
     if (!p || !action.text) return;
     const size = action.fontSize ?? TEXT_FONT_SIZE;
     ctx.save();
-    ctx.globalAlpha = action.opacity;
+    ctx.globalAlpha = actionOpacity(action);
     ctx.fillStyle = action.color;
     ctx.font = `600 ${size}px "Plus Jakarta Sans", system-ui, sans-serif`;
     ctx.textBaseline = "top";
     const lines = action.text.split("\n");
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(lines[i], p.x, p.y + i * size * 1.25);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 马赛克笔：以屏幕截图（blurBase）为源，沿笔画路径按 cell 粒度采样贴图。
+   * 源区按当前画布变换的设备像素比换算（画布已 setTransform(dpr,0,0,dpr,0,0)），
+   * 目标区为 cell×cell CSS 像素。无底图时跳过（不抛错）。
+   */
+  function drawMosaicSegment(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    if (!blurBase || action.points.length === 0) return;
+    const cell = Math.max(BLUR_CELL_MIN, Math.round(action.lineWidth / 3));
+    // 当前变换的缩放系数即设备像素比（导出时 renderTo 用 scale 设置同一变换）
+    const dprScale = Math.max(1, ctx.getTransform().a);
+
+    // 沿折线按弧长 cell 步进采样（起点 + 中间点 + 终点）
+    const pts = action.points;
+    const samples: Point[] = [{ x: pts[0].x, y: pts[0].y }];
+    let traveled = 0;
+    let nextAt = cell;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const seg = Math.hypot(b.x - a.x, b.y - a.y);
+      if (seg < 1e-4) continue;
+      const segEnd = traveled + seg;
+      while (nextAt <= segEnd) {
+        const t = (nextAt - traveled) / seg;
+        samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+        nextAt += cell;
+        if (samples.length >= 5000) break;
+      }
+      traveled = segEnd;
+    }
+    const last = pts[pts.length - 1];
+    const tail = samples[samples.length - 1];
+    if (Math.hypot(last.x - tail.x, last.y - tail.y) > 1) {
+      samples.push({ x: last.x, y: last.y });
+    }
+
+    ctx.save();
+    // 马赛克用源覆盖合成，显式切回默认模式（橡皮等其他路径不经过此处）
+    ctx.globalCompositeOperation = "source-over";
+    ctx.imageSmoothingEnabled = false;
+    for (const s of samples) {
+      ctx.drawImage(
+        blurBase,
+        s.x * dprScale,
+        s.y * dprScale,
+        cell * dprScale,
+        cell * dprScale,
+        s.x,
+        s.y,
+        cell,
+        cell,
+      );
     }
     ctx.restore();
   }
@@ -318,8 +398,21 @@ export function useDrawing(
           action.points,
           action.color,
           action.lineWidth,
-          action.opacity,
+          actionOpacity(action),
         );
+        break;
+      case "fading":
+        // 渐隐笔与钢笔几何完全一致：渐隐只影响透明度，不影响线宽/形状
+        drawPressureSegment(
+          ctx,
+          action.points,
+          action.color,
+          action.lineWidth,
+          actionOpacity(action),
+        );
+        break;
+      case "blur":
+        drawMosaicSegment(ctx, action);
         break;
       default:
         drawSmoothSegment(
@@ -327,7 +420,7 @@ export function useDrawing(
           action.points,
           action.color,
           action.lineWidth,
-          action.opacity,
+          actionOpacity(action),
         );
     }
   }
@@ -374,6 +467,69 @@ export function useDrawing(
     });
   }
 
+  // ---- 渐隐笔生命周期 ----
+
+  let fadeTimer: number | null = null;
+
+  function stopFadeTimer() {
+    if (fadeTimer !== null) {
+      clearInterval(fadeTimer);
+      fadeTimer = null;
+    }
+  }
+
+  /** 有渐隐笔画时启动轮询（无则保持空闲，避免常驻定时器） */
+  function ensureFadeTimer() {
+    if (fadeTimer === null) {
+      fadeTimer = setInterval(fadeTick, FADE_TICK_MS);
+    }
+  }
+
+  /**
+   * 渐隐轮询：过期笔画从 history 移除，并同步清理 undo/redo 栈中引用同一
+   * action 的条目（保持撤销一致性）；未过期则周期重绘让透明度逐帧下降。
+   */
+  function fadeTick() {
+    const now = Date.now();
+    const expired = new Set<DrawAction>();
+    let hasFading = false;
+    for (const a of history.value) {
+      if (a.tool === "fading") {
+        hasFading = true;
+        if (a.bornAt !== undefined && now - a.bornAt >= FADE_DURATION_MS) {
+          expired.add(a);
+        }
+      }
+    }
+    // 已撤销/已重做栈中的渐隐笔画同样参与过期判定
+    for (const stack of [undoStack.value, redoStack.value]) {
+      for (const entry of stack) {
+        for (const a of entry.actions) {
+          if (a.tool === "fading") {
+            hasFading = true;
+            if (a.bornAt !== undefined && now - a.bornAt >= FADE_DURATION_MS) {
+              expired.add(a);
+            }
+          }
+        }
+      }
+    }
+    if (expired.size > 0) {
+      history.value = history.value.filter((a) => !expired.has(a));
+      const keep = (entry: UndoEntry) =>
+        entry.actions.some((a) => !expired.has(a));
+      undoStack.value = undoStack.value.filter(keep);
+      redoStack.value = redoStack.value.filter(keep);
+    }
+    if (hasFading) {
+      // 周期重绘呈现渐隐动画（透明度随时间线性下降）
+      historyDirty = true;
+      scheduleRender();
+    } else {
+      stopFadeTimer();
+    }
+  }
+
   // ---- 笔画生命周期 ----
 
   function startDraw(e: PointerEvent): boolean {
@@ -387,6 +543,10 @@ export function useDrawing(
       opacity: currentOpacity(),
       points: [p],
     };
+    // 渐隐笔记录诞生时刻，供透明度衰减与过期清理使用
+    if (currentTool.value === "fading") {
+      currentAction.bornAt = Date.now();
+    }
     // 形状工具：起始点即两点起点
     if (isShape) currentAction.points.push({ x: p.x, y: p.y });
     lastPoint = p;
@@ -480,6 +640,7 @@ export function useDrawing(
     }
     history.value.push(currentAction);
     undoStack.value.push({ type: "add", actions: [currentAction] });
+    if (currentAction.tool === "fading") ensureFadeTimer();
     redoStack.value = [];
     currentAction = null;
     lastPoint = null;
@@ -516,6 +677,8 @@ export function useDrawing(
       const removed = history.value.splice(history.value.length - count, count);
       undoStack.value.push({ type: "add", actions: removed });
     }
+    // 重做带回渐隐笔画时重启轮询（可能已因栈中无渐隐而停止）
+    if (entry.actions.some((a) => a.tool === "fading")) ensureFadeTimer();
     historyDirty = true;
     scheduleRender();
   }
@@ -536,6 +699,8 @@ export function useDrawing(
     currentAction = null;
     lastPoint = null;
     isDrawing.value = false;
+    blurBase = null;
+    stopFadeTimer();
     historyDirty = true;
     previewDirty = true;
     scheduleRender();
@@ -544,12 +709,14 @@ export function useDrawing(
   /**
    * 把已提交笔画重绘到外部 canvas（截图导出用）。
    * 调用方负责设置 target 尺寸/变换；本函数以 CSS 像素坐标绘制。
+   * base 传入时马赛克底图临时指向它（导出用新截屏做马赛克源），渲染后恢复。
    */
   function renderTo(
     target: HTMLCanvasElement | null,
     cssW: number,
     cssH: number,
     scale: number,
+    base?: CanvasImageSource | null,
   ) {
     if (!target) return;
     target.width = Math.floor(cssW * scale);
@@ -559,9 +726,21 @@ export function useDrawing(
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    const prevBase = blurBase;
+    if (base) blurBase = base;
     for (const action of history.value) {
       drawAction(ctx, action);
     }
+    blurBase = prevBase;
+  }
+
+  /** 设置马赛克底图（屏幕截屏）；null 表示清除 */
+  function setBlurBase(img: CanvasImageSource | null) {
+    blurBase = img;
+  }
+
+  function hasBlurBase(): boolean {
+    return blurBase !== null;
   }
 
   function destroy() {
@@ -569,6 +748,7 @@ export function useDrawing(
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+    stopFadeTimer();
   }
 
   // 配置变更 → 重绘（颜色/线宽不影响已提交笔画，但保留便于扩展）
@@ -596,6 +776,8 @@ export function useDrawing(
     clearAll,
     hardReset,
     renderTo,
+    setBlurBase,
+    hasBlurBase,
     destroy,
     getDPR,
   };
