@@ -275,7 +275,18 @@ export function useDrawing(
     ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+    if (action.tool === "arrow") {
+      // 箭头：线段终点沿方向回缩半个线宽，使圆帽外沿正好收在箭头尖端，
+      // 避免尖端被线帽顶出
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      const shrink = action.lineWidth / 2;
+      ctx.lineTo(
+        b.x - Math.cos(angle) * shrink,
+        b.y - Math.sin(angle) * shrink,
+      );
+    } else {
+      ctx.lineTo(b.x, b.y);
+    }
     ctx.stroke();
 
     if (action.tool === "arrow") {
@@ -320,7 +331,10 @@ export function useDrawing(
    * 源区按当前画布变换的设备像素比换算（画布已 setTransform(dpr,0,0,dpr,0,0)），
    * 目标区为 cell×cell CSS 像素。无底图时跳过（不抛错）。
    */
-  function drawMosaicSegment(ctx: CanvasRenderingContext2D, action: DrawAction) {
+  function drawMosaicSegment(
+    ctx: CanvasRenderingContext2D,
+    action: DrawAction,
+  ) {
     if (!blurBase || action.points.length === 0) return;
     const cell = Math.max(BLUR_CELL_MIN, Math.round(action.lineWidth / 3));
     // 当前变换的缩放系数即设备像素比（导出时 renderTo 用 scale 设置同一变换）
@@ -402,7 +416,15 @@ export function useDrawing(
         );
         break;
       case "fading":
-        // 渐隐笔与钢笔几何完全一致：渐隐只影响透明度，不影响线宽/形状
+        // 渐隐笔：先以略宽的白色打底（外层白边更醒目），再叠彩色笔迹；
+        // 几何/透明度与钢笔一致，渐隐只影响透明度，不影响线宽/形状
+        drawPressureSegment(
+          ctx,
+          action.points,
+          "#ffffff",
+          action.lineWidth + 3,
+          actionOpacity(action),
+        );
         drawPressureSegment(
           ctx,
           action.points,
@@ -436,6 +458,10 @@ export function useDrawing(
     );
     for (const action of history.value) {
       drawAction(historyCtx, action);
+    }
+    // 进行中的橡皮：按住时实时作用到历史层（已提交笔画被立即擦除）
+    if (currentAction?.tool === "eraser") {
+      drawAction(historyCtx, currentAction);
     }
     historyDirty = false;
   }
@@ -589,6 +615,10 @@ export function useDrawing(
     currentAction.points.push(...points);
     lastPoint = p;
     previewDirty = true;
+    // 橡皮实时擦除：标记历史层脏，让 redrawHistory 把进行中的橡皮作用到已提交笔画上
+    if (currentAction.tool === "eraser") {
+      historyDirty = true;
+    }
     scheduleRender();
   }
 

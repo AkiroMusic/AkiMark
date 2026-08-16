@@ -59,7 +59,8 @@ impl log::Log for FileLogFacade {
 /// 写一条日志（线程安全、追加式）。
 pub fn log(msg: &str) {
     let path = LOGGER.path.lock().unwrap().clone();
-    if let Some(path) = path {        write_line(&path, &format!("[{}] {msg}", ts()));
+    if let Some(path) = path {
+        write_line(&path, &format!("[{}] {msg}", ts()));
     }
 }
 

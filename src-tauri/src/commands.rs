@@ -182,9 +182,18 @@ pub fn open_settings(app: AppHandle) {
 }
 
 /// 开机自启动（Windows: HKCU Run 注册表项，后台零进程开销）
+///
+/// 幂等处理：目标状态已达成时直接返回成功。
+/// 关键：auto-launch 的 disable() 会删除注册表值，若该值本就不存在
+/// （从未启用过自启动），删除会返回 ERROR_FILE_NOT_FOUND（os error 2），
+/// 因此必须先查询 is_enabled() 再决定是否真正执行 enable/disable。
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> AppResult<()> {
     use tauri_plugin_autostart::ManagerExt;
+    let current = app.autolaunch().is_enabled()?;
+    if current == enabled {
+        return Ok(());
+    }
     if enabled {
         app.autolaunch().enable()?;
     } else {
