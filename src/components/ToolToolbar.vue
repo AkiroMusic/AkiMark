@@ -42,8 +42,10 @@ const emit = defineEmits<{
 function toolIcon(tool: Tool) {
   switch (tool) {
     case "pen":
-    case "fading":
       return "M12 19 L19 5 L16 4 L4 15 Z M12 19 L5 19 Z";
+    case "fading":
+      // 渐隐笔：笔尖与钢笔一致，但尾部改为渐变小点（笔迹随时间溶解的意象）
+      return "M12 19 L19 5 L16 4 L4 15 Z M12 19 L9 17 M8 14.5 L6.5 13.5 M5.5 11 L4.5 10.3";
     case "highlighter":
       return "M9 11 L18 2 L22 6 L13 15 Z M5 19 L9 15 M7 17 L3 21 Z";
     case "eraser":

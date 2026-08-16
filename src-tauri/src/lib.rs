@@ -94,7 +94,9 @@ pub fn run() {
                 .unwrap()
                 .general
                 .open_settings_on_startup;
-            crate::log::log(&format!("setup: open_settings_on_startup = {open_on_startup}"));
+            crate::log::log(&format!(
+                "setup: open_settings_on_startup = {open_on_startup}"
+            ));
             if open_on_startup {
                 open_settings(&app.handle());
             }

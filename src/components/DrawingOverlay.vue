@@ -602,15 +602,10 @@ async function ensureBlurBase() {
 
 // ---- 黑白板模式 ----
 function cycleBoard() {
-  // 从配置的默认底色开始循环：none -> boardDefault -> 另一色 -> none
-  const other: "white" | "black" =
-    boardDefault.value === "white" ? "black" : "white";
-  const next =
-    boardMode.value === "none"
-      ? boardDefault.value
-      : boardMode.value === boardDefault.value
-        ? other
-        : "none";
+  // 直接切换配置的默认板书底色：none ⇄ boardDefault（一次点击直达设置里选的板，
+  // 不再循环两色，避免"点了两次才切到想用的板"）
+  const next: "none" | "white" | "black" =
+    boardMode.value === "none" ? boardDefault.value : "none";
   boardMode.value = next;
   if (next !== "none") {
     showToast(t(next === "white" ? "action.boardWhite" : "action.boardBlack"));
