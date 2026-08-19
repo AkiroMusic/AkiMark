@@ -450,8 +450,12 @@ async function save() {
           <span class="help-desc">{{ t("settings.helpInF") }}</span>
         </div>
         <div class="help-row">
-          <kbd class="help-kbd font-mono">M</kbd>
+          <kbd class="help-kbd font-mono">M / Z</kbd>
           <span class="help-desc">{{ t("settings.helpInM") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">B</kbd>
+          <span class="help-desc">{{ t("settings.helpInB") }}</span>
         </div>
         <div class="help-row">
           <kbd class="help-kbd font-mono">S</kbd>

@@ -24,6 +24,9 @@ pub struct AppState {
     /// 激活保护代际号：每次置位递增，旧置位的延时复位只在自己仍是最新代际时生效，
     /// 防止 capture_screen(150ms) 与 activate_drawing(600ms) 的复位互相踩踏。
     pub activation_gen: Arc<AtomicU64>,
+    /// 板书模式激活中（前端在板书开关时同步）：板书期间穿透不可用，
+    /// 手动切换、全局热键、失焦自动穿透一律拒绝。
+    pub board_active: Arc<AtomicBool>,
     /// 当前注册失败的全局快捷键（被其他程序占用）
     pub shortcut_conflicts: Mutex<Vec<String>>,
 }
@@ -35,6 +38,7 @@ impl AppState {
             mode: Mutex::new(OverlayMode::Hidden),
             activation_guard: Arc::new(AtomicBool::new(false)),
             activation_gen: Arc::new(AtomicU64::new(0)),
+            board_active: Arc::new(AtomicBool::new(false)),
             shortcut_conflicts: Mutex::new(Vec::new()),
         }
     }
@@ -138,6 +142,12 @@ pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> A
     if get_mode(state) == OverlayMode::Hidden {
         return Ok(());
     }
+    // 板书模式期间穿透不可用：手动切换、全局热键、失焦自动穿透统一拒绝。
+    // 通知前端弹提示（前端自身也会在板书模式下拦截 X/M 快捷键，这里兜底热键/自动穿透路径）。
+    if state.board_active.load(Ordering::SeqCst) {
+        let _ = app.emit("penetration-blocked", ());
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
     win32::release_cursor();
 
@@ -174,4 +184,9 @@ pub fn toggle_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) {
     if let Err(e) = result {
         eprintln!("[akimark] toggle_penetration 失败: {e}");
     }
+}
+
+/// 同步板书模式标志（前端在板书开关时调用）：板书期间穿透不可用。
+pub fn set_board_active(state: &State<'_, AppState>, active: bool) {
+    state.board_active.store(active, Ordering::SeqCst);
 }

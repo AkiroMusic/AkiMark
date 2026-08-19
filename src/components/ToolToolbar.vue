@@ -15,7 +15,6 @@ const props = defineProps<{
   canClear: boolean;
   penetrating: boolean;
   spotlight: boolean;
-  magnifier: boolean;
   board: "none" | "white" | "black";
   zoom: boolean;
 }>();
@@ -32,7 +31,6 @@ const emit = defineEmits<{
   penetrate: [];
   export: [];
   toggleSpotlight: [];
-  toggleMagnifier: [];
   toggleBoard: [];
   toggleZoom: [];
   exit: [];
@@ -178,27 +176,9 @@ function onToolbarClick(e: MouseEvent) {
       </button>
       <button
         class="mini-btn"
-        :class="{ active: magnifier }"
-        :title="t('action.magnifier')"
-        @click="emit('toggleMagnifier')"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21 L16.65 16.65" />
-          <path d="M11 8 V14 M8 11 H14" />
-        </svg>
-      </button>
-      <button
-        class="mini-btn"
         :class="{ active: zoom }"
-        :title="t('action.zoom')"
+        :disabled="board !== 'none'"
+        :title="board !== 'none' ? t('action.zoomInBoard') : t('action.zoom')"
         @click="emit('toggleZoom')"
       >
         <svg
@@ -304,7 +284,12 @@ function onToolbarClick(e: MouseEvent) {
       </button>
       <button
         class="mini-btn"
-        :title="t('action.penetrate')"
+        :disabled="board !== 'none'"
+        :title="
+          board !== 'none'
+            ? t('action.penetrateInBoard')
+            : t('action.penetrate')
+        "
         @click="emit('penetrate')"
       >
         <svg

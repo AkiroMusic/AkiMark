@@ -116,6 +116,7 @@ pub fn run() {
             commands::enter_penetration_mode,
             commands::exit_penetration_mode,
             commands::toggle_penetration_mode,
+            commands::set_board_active,
             commands::capture_screen,
             commands::save_export,
             commands::open_settings,

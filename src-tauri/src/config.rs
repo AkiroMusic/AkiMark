@@ -58,7 +58,7 @@ pub struct GeneralConfig {
     pub board_default: String,
     /// 是否在启动时打开设置窗口（托盘常驻，设置用完即毁）
     pub open_settings_on_startup: bool,
-    /// 导出目录；None = 系统图片目录
+    /// 导出目录；None = 桌面
     pub export_dir: Option<String>,
 }
 
