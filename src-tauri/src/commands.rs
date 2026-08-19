@@ -39,7 +39,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
 }
 
 /// 把前端合成好的 PNG（base64）保存到导出目录，返回文件完整路径。
-/// 目录优先级：配置的 export_dir → 系统图片目录 → 应用数据目录。
+/// 目录优先级：配置的 export_dir → 桌面 → 应用数据目录。
 #[tauri::command]
 pub fn save_export(
     app: AppHandle,
@@ -59,7 +59,7 @@ pub fn save_export(
         .decode(png_base64)
         .map_err(|_| AppError::InvalidExportData)?;
 
-    // 配置的导出目录优先；为空则回退系统图片目录，再回退应用数据目录
+    // 配置的导出目录优先；为空则回退桌面目录，再回退应用数据目录
     let configured = state.config.lock().unwrap().general.export_dir.clone();
     let dir = configured
         .filter(|d| !d.trim().is_empty())
@@ -79,7 +79,7 @@ pub fn save_export(
         .map(Ok)
         .unwrap_or_else(|| {
             app.path()
-                .picture_dir()
+                .desktop_dir()
                 .or_else(|_| app.path().app_data_dir())
                 .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
         })?;
@@ -223,6 +223,13 @@ pub fn toggle_penetration_mode(app: AppHandle, state: State<'_, AppState>) {
     overlay::toggle_penetration_mode(&app, &state);
 }
 
+/// 同步板书模式标志（前端在板书开关时调用）：板书期间穿透不可用，
+/// 全局热键/失焦自动穿透/手动切换一律被后端拒绝。
+#[tauri::command]
+pub fn set_board_active(state: State<'_, AppState>, active: bool) {
+    overlay::set_board_active(&state, active);
+}
+
 /// 窗口关闭请求：
 /// - overlay：阻止销毁，改为隐藏（常驻后台，毫秒级激活的前提）
 /// - settings：允许关闭并销毁（用后即毁，不占资源）
@@ -249,6 +256,11 @@ pub fn handle_focus_event(app: &AppHandle, event: &tauri::WindowEvent) {
         .activation_guard
         .load(std::sync::atomic::Ordering::SeqCst)
     {
+        return;
+    }
+    // 板书模式期间禁止失焦自动穿透：板书是"专注书写"场景，
+    // 用户点击其他窗口是为了参考而非操作，不应自动把鼠标放行。
+    if state.board_active.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
 

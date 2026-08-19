@@ -19,17 +19,16 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
 - ⏳ **Fading pen** — Strokes dissolve automatically ~3s after being drawn (press `2`); perfect for transient emphasis.
 - 🧊 **Blur (mosaic) pen** — Pixelate regions of the underlying screen along the stroke path (press `0`).
-- 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`).
-- 🔎 **Magnifier** — ZoomIt-style 2x/4x screen magnifier (press `M`).
+- 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`; scroll adjusts radius).
 - 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board for free-hand lecturing (press `B`; export skips the screen capture).
-- 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `Z`; scroll to change the level).
+- 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `M` / `Z`; scroll to change the level).
 - 📸 **Export screenshot** — Composite annotations onto the underlying screen and save as PNG (press `S` or the toolbar button; custom export folder).
 - ↩️ **Undo / Redo / Clear** — Full history stack.
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
 - 🪟 **System tray resident** — Zero-drama background presence; single-instance guard.
 - ⚙️ **Settings window** — Configure global shortcuts, launch-at-startup, default tool/color/line width, export folder.
-- 📁 **Custom export folder** — Choose where exported PNG screenshots go (defaults to Pictures).
+- 📁 **Custom export folder** — Choose where exported PNG screenshots go (defaults to Desktop).
 - 🚦 **Shortcut conflict detection** — Saving a hotkey already taken by another app shows an inline warning and keeps the previous binding.
 - ✏️ **Pen-styled cursor** — A 45° pen-tip cursor that feels like writing.
 - 🌐 **i18n** — English / 简体中文.
@@ -59,9 +58,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | `7` / `8` | Circle / Arrow |
 | `9` / `0` | Text / Blur |
 | `Q` / `E` | Cycle color |
-| `F` | Toggle spotlight |
-| `M` | Toggle magnifier (2x / 4x) |
-| `Z` | Toggle screen zoom (scroll to change 2x / 4x / 6x / 8x) |
+| `F` | Toggle spotlight (scroll adjusts radius) |
+| `M` / `Z` | Toggle screen zoom (click to focus at cursor, scroll changes 2x / 4x / 6x / 8x) |
 | `B` | Cycle board mode (off → whiteboard → blackboard) |
 | `S` | Export screenshot as PNG |
 | `Space` | Toggle toolbar |
@@ -77,6 +75,17 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | Left-drag | Draw with current tool |
 | Hold right-button | Temporary eraser |
 | Click toolbar area | Toolbar interaction (not drawing) |
+
+### Mode interactions
+
+AkiMark's overlay modes are designed to be mutually self-consistent — each mode combination behaves predictably, with no dead states:
+
+- **Board mode (B) blocks screen zoom & click-through** — while a whiteboard/blackboard is on, the overlay is a pure writing surface: zoom would leak the real screen behind it, and click-through would let the mouse operate the app underneath. Entering board mode exits zoom and click-through automatically; the zoom and click-through toolbar buttons are disabled with a hint.
+- **Zoom ↔ spotlight are mutually exclusive** — entering one exits the other, so the scroll wheel always has a single meaning (spotlight radius when spotlight is on, zoom level when zoomed).
+- **Zoom ↔ click-through are mutually exclusive** — entering one exits the other, avoiding a frozen zoomed screenshot blocking the app you are clicking through to.
+- **Spotlight + click-through are allowed** — spotlight is a pure visual overlay (it never intercepts the mouse), so it works as a "laser pointer" while clicking through.
+- **`Esc` steps out layer by layer** — zoom first, then board mode, then annotation mode.
+- Click-through is additionally refused at the backend level while a board is active, so the global hotkey and the auto-penetration-on-focus-loss feature can never bypass the rule.
 
 ---
 
@@ -204,17 +213,16 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
 - ⏳ **渐隐笔** — 笔画绘制约 3 秒后自动溶解消失（按 `2`）；适合临时强调。
 - 🧊 **马赛克笔** — 沿笔画路径将底层屏幕画面打上马赛克（按 `0`）。
-- 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`）。
-- 🔎 **放大镜** — ZoomIt 式 2x / 4x 屏幕放大镜（按 `M`）。
+- 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`；滚轮调节半径）。
 - 🧑‍🏫 **白板 / 黑板模式** — 一键切换纯白 / 纯黑板书底，自由板书（按 `B`；导出时跳过截屏）。
-- 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `Z`；滚轮调整倍率）。
+- 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `M` / `Z`；滚轮调整倍率）。
 - 📸 **导出截图** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录）。
 - ↩️ **撤销 / 重做 / 清屏** — 完整的历史操作栈。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
 - 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
 - ⚙️ **设置窗口** — 配置全局快捷键、开机自启、默认工具 / 颜色 / 线宽、导出目录。
-- 📁 **自定义导出目录** — 可自由选择截图导出的保存位置（默认系统图片目录）。
+- 📁 **自定义导出目录** — 可自由选择截图导出的保存位置（默认桌面）。
 - 🚦 **快捷键占用检测** — 保存被其他程序占用的快捷键时，内联提示冲突并保留原绑定。
 - ✏️ **笔尖光标** — 45° 倾斜的笔尖光标，更接近真实书写的手感。
 - 🌐 **i18n** — 英文 / 简体中文。
@@ -244,9 +252,8 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | `7` / `8` | 圆形 / 箭头 |
 | `9` / `0` | 文字 / 马赛克笔 |
 | `Q` / `E` | 循环切换颜色 |
-| `F` | 开关聚光灯 |
-| `M` | 开关放大镜（2x / 4x） |
-| `Z` | 开关屏幕缩放（滚轮切换 2x / 4x / 6x / 8x） |
+| `F` | 开关聚光灯（滚轮调节半径） |
+| `M` / `Z` | 开关屏幕缩放（点击以光标处聚焦，滚轮切换 2x / 4x / 6x / 8x） |
 | `B` | 循环黑板模式（关 → 白板 → 黑板） |
 | `S` | 导出截图 PNG |
 | `Space` | 显示 / 隐藏工具栏 |
@@ -262,6 +269,17 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | 左键拖动 | 用当前工具绘制 |
 | 按住右键 | 临时橡皮擦 |
 | 点击工具栏区域 | 工具栏交互（非绘制） |
+
+### 模式互斥逻辑
+
+AkiMark 的叠加模式经过全面设计，保证逻辑完全自洽 —— 任意模式组合的行为都可预期，不存在死状态：
+
+- **板书模式（B）下禁用屏幕缩放与鼠标穿透** —— 板书开启时覆盖层是纯粹的书写面：缩放会透过板书纯色底露出真实屏幕，穿透则会让鼠标操作到下层应用。进入板书会自动退出缩放与穿透；缩放和穿透的工具栏按钮在板书期间置灰并给出提示。
+- **缩放 ↔ 聚光灯互斥** —— 进入其中一个自动退出另一个，滚轮在任何时刻只有一个含义（聚光灯开启时调半径，缩放时调倍率）。
+- **缩放 ↔ 穿透互斥** —— 进入其中一个自动退出另一个，避免冻结的放大画面挡住你正要穿透操作的应用。
+- **聚光灯 + 穿透可共存** —— 聚光灯是纯视觉叠加（从不拦截鼠标），穿透时相当于"激光笔"高亮。
+- **`Esc` 逐级退出** —— 先退缩放，再退板书，最后退出标注。
+- **后端兜底** —— 板书期间穿透还会在后端被拒绝，全局热键与失焦自动穿透两条路径都无法绕过该规则。
 
 ---
 
