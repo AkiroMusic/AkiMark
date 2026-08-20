@@ -11,9 +11,6 @@ export type Tool =
   | "fading"
   | "blur";
 
-/** 形状工具（拖拽定义两点） */
-export type ShapeTool = "rect" | "line" | "arrow" | "circle";
-
 /** 点（pressure 用于数位板压感，鼠标恒为 0.5） */
 export interface Point {
   x: number;

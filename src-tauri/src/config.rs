@@ -6,7 +6,7 @@ use crate::error::AppResult;
 
 /// 线宽配置（按工具分组）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct LineWidthsConfig {
     pub stroke: f64,
     pub highlighter: f64,
@@ -25,7 +25,7 @@ impl Default for LineWidthsConfig {
 
 /// 全局快捷键
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Shortcuts {
     pub toggle_drawing: String,
     pub clear_drawing: String,
@@ -44,7 +44,7 @@ impl Default for Shortcuts {
 
 /// 常规设置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct GeneralConfig {
     pub locale: String,
     pub theme: String,
@@ -79,20 +79,11 @@ impl Default for GeneralConfig {
 }
 
 /// 顶层配置
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     pub shortcuts: Shortcuts,
     pub general: GeneralConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            shortcuts: Shortcuts::default(),
-            general: GeneralConfig::default(),
-        }
-    }
 }
 
 /// 配置存取：JSON 文件，位于应用配置目录。
@@ -111,9 +102,15 @@ pub fn load_config(app: &tauri::AppHandle) -> AppConfig {
                     AppConfig::default()
                 }
             },
-            Err(_) => AppConfig::default(),
+            Err(e) => {
+                eprintln!("[akimark] config.json 读取失败，使用默认值: {e}");
+                AppConfig::default()
+            }
         },
-        Err(_) => AppConfig::default(),
+        Err(e) => {
+            eprintln!("[akimark] config 路径获取失败，使用默认值: {e}");
+            AppConfig::default()
+        }
     }
 }
 
@@ -123,7 +120,10 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> AppResult<()> 
         std::fs::create_dir_all(dir)?;
     }
     let content = serde_json::to_string_pretty(config)?;
-    std::fs::write(&path, content)?;
+    // 原子写入：先写临时文件再 rename，避免写入中途崩溃损坏配置
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -207,18 +207,42 @@ mod tests {
         // load_config 需要 AppHandle，这里只验证解析层容错逻辑可复用
         let bad = r#"{ not valid json "#;
         assert!(serde_json::from_str::<AppConfig>(bad).is_err());
-        // 缺字段的 JSON → 报错（不会静默产生半初始化配置）
+    }
+
+    #[test]
+    fn missing_fields_merge_with_defaults() {
+        // 缺字段的 JSON → 用默认值补齐（serde(default)），已提供的字段保留
         let partial = r#"{"general":{"locale":"en"}}"#;
-        assert!(serde_json::from_str::<AppConfig>(partial).is_err());
+        let cfg: AppConfig = serde_json::from_str(partial).unwrap();
+        assert_eq!(cfg.general.locale, "en");
+        assert_eq!(cfg.general.default_tool, "pen");
+        assert_eq!(cfg.general.line_widths.stroke, 3.0);
+        assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Shift+R");
+    }
+
+    #[test]
+    fn config_with_one_field_removed_still_loads() {
+        // 从完整配置中删掉 lineWidths 字段：仍能加载，缺失字段用默认值
+        let json = r##"{
+            "shortcuts": {"toggleDrawing": "Ctrl+Alt+A", "clearDrawing": "Ctrl+Shift+C", "togglePenetration": "Ctrl+Shift+X"},
+            "general": {"locale": "en", "theme": "dark", "preserveDrawings": false, "defaultTool": "pen", "defaultColor": "#6C8CFF", "boardDefault": "white", "openSettingsOnStartup": true, "exportDir": null}
+        }"##;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Alt+A");
+        assert_eq!(cfg.general.locale, "en");
+        assert_eq!(cfg.general.line_widths.stroke, 3.0);
+        assert_eq!(cfg.general.line_widths.highlighter, 10.0);
     }
 
     #[test]
     fn partial_update_preserves_other_fields() {
         // 前端 save_general 只传 GeneralConfig，验证结构体语义：直接赋值整个字段
-        let mut cfg = AppConfig::default();
-        cfg.general = GeneralConfig {
-            locale: "en".into(),
-            ..GeneralConfig::default()
+        let cfg = AppConfig {
+            general: GeneralConfig {
+                locale: "en".into(),
+                ..GeneralConfig::default()
+            },
+            ..AppConfig::default()
         };
         // shortcuts 应不受影响
         assert_eq!(cfg.shortcuts.toggle_drawing, "Ctrl+Shift+R");

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TOOL_DEFS } from "../constants/tools";
+import { TOOL_DEFS, TOOL_WIDTH_GROUP, WIDTH_MAX } from "../constants/tools";
 import { COLOR_PALETTE } from "../constants/colors";
 import { useI18n } from "../i18n";
 import type { Tool } from "../composables/drawingTypes";
@@ -68,29 +68,18 @@ function isActiveTool(tool: Tool) {
   return tool === props.tool;
 }
 
-// 线宽调节：形状/文字工具共用 stroke 组
-const WIDTH_GROUP: Record<Tool, "stroke" | "highlighter" | "eraser"> = {
-  pen: "stroke",
-  highlighter: "highlighter",
-  eraser: "eraser",
-  line: "stroke",
-  rect: "stroke",
-  circle: "stroke",
-  arrow: "stroke",
-  text: "stroke",
-  fading: "stroke",
-  blur: "stroke",
-};
+// 线宽调节：形状/文字工具共用 stroke 组（映射来自 tools.ts 单一来源）
 
 function widthOf(group: keyof typeof props.lineWidth) {
   return props.lineWidth[group];
 }
 
 function changeWidth(delta: number) {
-  const key = WIDTH_GROUP[props.tool];
+  const key = TOOL_WIDTH_GROUP[props.tool];
   const cur = props.lineWidth[key];
-  const next = Math.min(40, Math.max(1, Math.round(cur) + delta));
-  emit("updateWidth", { [key]: next } as Record<string, number>);
+  // 上限按分组取（荧光笔 80 / 橡皮 120），与设置窗口滑块一致
+  const next = Math.min(WIDTH_MAX[key], Math.max(1, Math.round(cur) + delta));
+  emit("updateWidth", { [key]: next });
 }
 
 /** 工具栏内任意按钮点击后失焦：避免按钮持焦时 Space 被按钮原生激活抢占，导致空格键无法切换工具栏 */
@@ -147,7 +136,7 @@ function onToolbarClick(e: MouseEvent) {
     <div class="toolbar-group width-group">
       <button class="mini-btn" @click="changeWidth(-1)">−</button>
       <span class="width-value">{{
-        Math.round(widthOf(WIDTH_GROUP[tool]))
+        Math.round(widthOf(TOOL_WIDTH_GROUP[tool]))
       }}</span>
       <button class="mini-btn" @click="changeWidth(1)">+</button>
     </div>

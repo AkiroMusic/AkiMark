@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run unit tests
+        run: npm run test
+
       - name: Type check & build
         run: npm run build:fe
 
@@ -28,7 +31,7 @@ jobs:
         run: npm run format:check
 
   backend:
-    name: Backend (cargo check)
+    name: Backend (cargo check + test)
     # AkiMark uses win32 APIs (src/win32.rs), so it only builds on Windows.
     runs-on: windows-latest
     steps:
@@ -45,3 +48,7 @@ jobs:
       - name: Cargo check
         working-directory: src-tauri
         run: cargo check
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test --release

@@ -19,11 +19,8 @@ pub fn get_cursor_monitor() -> Option<HMONITOR> {
         if GetCursorPos(&mut pt) == 0 {
             return None;
         }
-        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        if monitor.is_null() {
-            return None;
-        }
-        Some(monitor)
+        // MONITOR_DEFAULTTONEAREST 保证返回非空句柄（点不在任何显示器内时返回最近的）
+        Some(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST))
     }
 }
 

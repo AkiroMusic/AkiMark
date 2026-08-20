@@ -97,13 +97,10 @@ function flushRaf() {
 function setup() {
   const historyCtx = createMockCtx();
   const previewCtx = createMockCtx();
-  const drawing = useDrawing(
-    {
-      history: ref(fakeCanvas(historyCtx.ctx)),
-      preview: ref(fakeCanvas(previewCtx.ctx)),
-    },
-    () => 1,
-  );
+  const drawing = useDrawing({
+    history: ref(fakeCanvas(historyCtx.ctx)),
+    preview: ref(fakeCanvas(previewCtx.ctx)),
+  });
   drawing.setupCanvases(1000, 800, 1);
   flushRaf();
   return { drawing, historyCtx, previewCtx };
@@ -340,5 +337,67 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     expect(drawing.hasBlurBase()).toBe(true);
     drawing.hardReset();
     expect(drawing.hasBlurBase()).toBe(false);
+  });
+
+  it("F1: 渐隐笔画部分过期后 clearAll + undo/redo 不损坏历史", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const { drawing } = setup();
+    drawing.currentTool.value = "fading";
+    // 笔画 A：t0 诞生
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(30, 30));
+    drawing.endDraw();
+    // 1s 后笔画 B 诞生（与 A 不同时过期）
+    vi.advanceTimersByTime(1000);
+    drawing.startDraw(pointer(50, 50));
+    drawing.drawTo(pointer(70, 70));
+    drawing.endDraw();
+    drawing.clearAll();
+    // 撤销清屏：A、B 回到 history
+    drawing.undo();
+    expect(drawing.canClear.value).toBe(true);
+    // 再推进 2.5s：A 过期（t0+3.5s ≥ 3s），B 未过期（t0+1s+2.5s = 3.5s 时 B 仅 2.5s 龄）
+    vi.advanceTimersByTime(2500);
+    flushRaf();
+    // A 已被渐隐清理，B 仍在
+    expect(drawing.canClear.value).toBe(true);
+    // 重做清屏：只移除实际存在的 B，不因 count 错位吞掉其他笔画
+    drawing.redo();
+    expect(drawing.canClear.value).toBe(false);
+    // 撤销清屏：B 应被恢复（旧实现会因 splice 错位丢失）
+    drawing.undo();
+    expect(drawing.canClear.value).toBe(true);
+    // 再重做：往返一致
+    drawing.redo();
+    expect(drawing.canClear.value).toBe(false);
+  });
+
+  it("F2: 导出 scale ≠ overlay dpr 时马赛克源区按合成底图分辨率采样", () => {
+    const { drawing } = setup(); // setupCanvases(1000, 800, 1) → dpr = 1
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(100, 100));
+    drawing.drawTo(pointer(200, 200));
+    drawing.endDraw();
+    flushRaf();
+
+    // 导出：目标 scale = 2（如 4K 屏 dpr2 导出），合成底图仍为 dpr=1 分辨率
+    const targetCtx = createMockCtx();
+    targetCtx.ctx.getTransform = vi.fn(
+      () => ({ a: 2, b: 0, c: 0, d: 1, e: 0, f: 0 }) as unknown as DOMMatrix,
+    );
+    const target = fakeCanvas(targetCtx.ctx);
+    drawing.renderTo(target, 1000, 800, 2);
+
+    const drawImageMock = targetCtx.ctx.drawImage as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const drawCalls = drawImageMock.mock.calls;
+    expect(drawCalls.length).toBeGreaterThan(0);
+    // 源区坐标按合成底图分辨率（dpr=1）换算：首个采样点 (100,100)，half = cell*3/2
+    const cell = 3; // lineWidth 3 * 0.8 → max(BLUR_CELL_MIN=3, 2.4) = 3
+    const half = (cell * 3) / 2;
+    const sx = drawCalls[0][1] as number;
+    expect(sx).toBeCloseTo(100 - half);
   });
 });
