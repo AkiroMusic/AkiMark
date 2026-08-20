@@ -11,7 +11,7 @@ use crate::error::{AppError, AppResult};
 pub fn capture_cursor_monitor_png() -> AppResult<String> {
     #[cfg(target_os = "windows")]
     {
-        return imp::capture_cursor_monitor_png();
+        imp::capture_cursor_monitor_png()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -107,7 +107,12 @@ mod imp {
             DeleteDC(hdc_mem);
             ReleaseDC(std::ptr::null_mut(), hdc_screen);
 
-            if lines == 0 {
+            // GetDIBits 返回实际复制的扫描行数：必须等于 h，否则像素缓冲不完整
+            if lines != h as i32 {
+                SelectObject(hdc_mem, old);
+                DeleteObject(hbmp);
+                DeleteDC(hdc_mem);
+                ReleaseDC(std::ptr::null_mut(), hdc_screen);
                 return None;
             }
             Some(pixels)

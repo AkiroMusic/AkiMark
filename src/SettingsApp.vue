@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig, Shortcuts } from "./configTypes";
 import { COLOR_PALETTE, DEFAULT_COLOR } from "./constants/colors";
-import { TOOL_DEFS } from "./constants/tools";
+import { TOOL_DEFS, TOAST_DURATION_MS, WIDTH_MAX } from "./constants/tools";
 import { useI18n } from "./i18n";
+import { buildGeneralPayload } from "./settingsGeneral";
 import type { Tool } from "./composables/drawingTypes";
 
 const { t } = useI18n();
@@ -23,6 +24,12 @@ const boardDefault = ref<"white" | "black">("white");
 const lineWidths = reactive({ stroke: 3, highlighter: 10, eraser: 12 });
 const autostart = ref(false);
 const openSettingsOnStartup = ref(true);
+/** 界面语言（config.json 中的 locale，保存时原样回写） */
+const locale = ref("zh-CN");
+/** 主题（config.json 中的 theme，保存时原样回写） */
+const theme = ref("dark");
+/** 退出标注时是否保留笔迹（config.json 中的 preserveDrawings） */
+const preserveDrawings = ref(false);
 /** 导出目录；null = 系统图片目录 */
 const exportDir = ref<string | null>(null);
 
@@ -37,7 +44,6 @@ const conflictKeys = ref<string[]>([]);
 const recordingKey = ref<
   "toggleDrawing" | "clearDrawing" | "togglePenetration" | null
 >(null);
-const shortcutDraft = ref("");
 
 type ShortcutKey = keyof Shortcuts;
 
@@ -60,12 +66,21 @@ function isI18nErrorKey(msg: string): boolean {
 }
 
 // ---- 加载 ----
+/** shortcut-conflict 事件反注册函数（卸载时清理） */
+let unlistenConflict: (() => void) | null = null;
+/** 保存成功 Toast 定时器（重复保存时先清旧再设新） */
+let savedToastTimer: number | null = null;
+
 onMounted(async () => {
   // 监听快捷键冲突广播（启动时注册失败 / 保存时被占用）
   const { listen } = await import("@tauri-apps/api/event");
-  listen<string[]>("shortcut-conflict", (e) => {
-    conflictKeys.value = e.payload;
-  }).catch(() => {});
+  try {
+    unlistenConflict = await listen<string[]>("shortcut-conflict", (e) => {
+      conflictKeys.value = e.payload;
+    });
+  } catch (err) {
+    console.warn("[akimark] listen shortcut-conflict failed", err);
+  }
 
   try {
     const cfg = await invoke<AppConfig>("get_config");
@@ -80,6 +95,10 @@ onMounted(async () => {
     lineWidths.eraser = cfg.general.lineWidths.eraser;
     openSettingsOnStartup.value = cfg.general.openSettingsOnStartup;
     exportDir.value = cfg.general.exportDir ?? null;
+    // 常规设置表单回填：保存时原样回写，避免覆盖 config.json 中的值
+    locale.value = cfg.general.locale;
+    theme.value = cfg.general.theme;
+    preserveDrawings.value = cfg.general.preserveDrawings;
 
     try {
       autostart.value = await invoke<boolean>("get_autostart");
@@ -100,6 +119,35 @@ onMounted(async () => {
   }
 });
 
+onBeforeUnmount(() => {
+  unlistenConflict?.();
+  unlistenConflict = null;
+  if (savedToastTimer) {
+    window.clearTimeout(savedToastTimer);
+    savedToastTimer = null;
+  }
+});
+
+// 表单任何改动 → 清除上一次的错误提示（避免旧错误残留误导）
+watch(
+  [
+    shortcuts,
+    defaultTool,
+    defaultColor,
+    boardDefault,
+    lineWidths,
+    autostart,
+    openSettingsOnStartup,
+    locale,
+    theme,
+    preserveDrawings,
+    exportDir,
+  ],
+  () => {
+    errorMsg.value = "";
+  },
+);
+
 // ---- 快捷键录制 ----
 function startRecording(key: ShortcutKey) {
   if (recordingKey.value === key) {
@@ -107,7 +155,6 @@ function startRecording(key: ShortcutKey) {
     return;
   }
   recordingKey.value = key;
-  shortcutDraft.value = shortcuts[key];
 }
 
 function onKeyDownCapture(e: KeyboardEvent) {
@@ -121,7 +168,7 @@ function onKeyDownCapture(e: KeyboardEvent) {
   if (e.shiftKey) parts.push("Shift");
   if (e.metaKey) parts.push("Super");
 
-  const k = e.key;
+  const k = e.key === " " ? "Space" : e.key;
   // 只接受修饰键 + 一个功能键/字母/数字
   const isPlainKey =
     /^[a-zA-Z0-9]$/.test(k) ||
@@ -195,7 +242,21 @@ async function save() {
   errorMsg.value = "";
   saving.value = true;
   try {
-    // 快捷键：返回被占用的快捷键列表
+    // 1. 常规设置（含 locale/theme/preserveDrawings 表单实际值）
+    await invoke("save_general", {
+      general: buildGeneralPayload({
+        locale: locale.value,
+        theme: theme.value,
+        preserveDrawings: preserveDrawings.value,
+        lineWidths: { ...lineWidths },
+        defaultTool: defaultTool.value,
+        defaultColor: defaultColor.value,
+        boardDefault: boardDefault.value,
+        openSettingsOnStartup: openSettingsOnStartup.value,
+        exportDir: exportDir.value,
+      }),
+    });
+    // 2. 快捷键：返回被占用的快捷键列表
     const conflicts = await invoke<string[]>("save_shortcuts", {
       shortcuts: { ...shortcuts },
     });
@@ -203,24 +264,17 @@ async function save() {
       const detail = conflicts.join(" / ");
       errorMsg.value = `${t("settings.shortcutConflict")}: ${detail}`;
     }
-    // 常规设置
-    await invoke("save_general", {
-      general: {
-        locale: "zh-CN",
-        theme: "dark",
-        preserveDrawings: false,
-        lineWidths: { ...lineWidths },
-        defaultTool: defaultTool.value,
-        defaultColor: defaultColor.value,
-        boardDefault: boardDefault.value,
-        openSettingsOnStartup: openSettingsOnStartup.value,
-        exportDir: exportDir.value,
-      },
-    });
-    // 自启动
+    // 3. 自启动
     await invoke("set_autostart", { enabled: autostart.value });
-    savedToast.value = true;
-    setTimeout(() => (savedToast.value = false), 1600);
+    // 有快捷键冲突时不弹"已保存"（冲突即未完全生效，避免误导）
+    if (conflicts.length === 0) {
+      savedToast.value = true;
+      if (savedToastTimer) window.clearTimeout(savedToastTimer);
+      savedToastTimer = window.setTimeout(() => {
+        savedToast.value = false;
+        savedToastTimer = null;
+      }, TOAST_DURATION_MS);
+    }
   } catch (e) {
     errorMsg.value = String(e);
   } finally {
@@ -346,7 +400,7 @@ async function save() {
               v-model.number="lineWidths.stroke"
               type="number"
               min="1"
-              max="40"
+              :max="WIDTH_MAX.stroke"
               class="width-input"
             />
           </label>
@@ -356,7 +410,7 @@ async function save() {
               v-model.number="lineWidths.highlighter"
               type="number"
               min="1"
-              max="80"
+              :max="WIDTH_MAX.highlighter"
               class="width-input"
             />
           </label>
@@ -366,7 +420,7 @@ async function save() {
               v-model.number="lineWidths.eraser"
               type="number"
               min="1"
-              max="120"
+              :max="WIDTH_MAX.eraser"
               class="width-input"
             />
           </label>

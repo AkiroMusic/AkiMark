@@ -27,6 +27,15 @@ pub enum AppError {
     /// 导出 payload 超过上限（base64 字符串过大，通常是异常/恶意调用）
     #[error("导出数据过大（上限 {0} 字节）")]
     ExportTooLarge(usize),
+    /// 导出目录非法（含 `..` 组件或指向已有文件）
+    #[error("无效的导出目录: {0}")]
+    InvalidExportDir(String),
+    /// 未知的绘制工具
+    #[error("无效的工具: {0}")]
+    InvalidTool(String),
+    /// 同一集合内重复的快捷键绑定
+    #[error("重复的快捷键: {0}")]
+    DuplicateShortcut(String),
 }
 
 pub type AppResult<T> = Result<T, AppError>;

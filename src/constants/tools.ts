@@ -28,8 +28,15 @@ export const TOOL_DEFS: ToolDef[] = [
   { id: "blur", label: "tool.blur", hotkey: "0" },
 ];
 
-/** 线宽预设 */
-export const WIDTH_PRESETS = [1, 2, 3, 5, 8];
+/** 线宽分组（工具栏调宽度用） */
+export type WidthGroup = "stroke" | "highlighter" | "eraser";
+
+/** 各线宽分组可调上限（工具栏 +/- 钳制与设置窗口 max 属性共用同一来源） */
+export const WIDTH_MAX: Record<WidthGroup, number> = {
+  stroke: 40,
+  highlighter: 80,
+  eraser: 120,
+};
 
 /** 渐隐笔完整渐隐周期（ms） */
 export const FADE_DURATION_MS = 3000;
@@ -83,3 +90,24 @@ export const TOOL_WIDTH_GROUP: Record<
   fading: "stroke",
   blur: "stroke",
 };
+
+/** 屏幕缩放倍率档位（滚轮循环切换） */
+export const ZOOM_LEVELS = [2, 4, 6, 8];
+
+/** 聚光灯参数：半径范围/步进/初始值 + 渐变遮罩偏移（CSS px） */
+export const SPOTLIGHT = {
+  min: 80,
+  max: 400,
+  step: 20,
+  initial: 160,
+  gradientInner: 30,
+  gradientOuter: 5,
+};
+
+/** Toast 展示时长（ms） */
+export const TOAST_DURATION_MS = 1600;
+/** 导出成功 Toast 展示时长（ms，含完整保存路径需更久展示） */
+export const TOAST_EXPORT_MS = 3200;
+
+/** 板书底色 */
+export const BOARD_COLORS = { white: "#ffffff", black: "#000000" };

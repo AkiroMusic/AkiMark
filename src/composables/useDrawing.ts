@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import type { Ref } from "vue";
 import type { DrawAction, LineWidths, Point, Tool } from "./drawingTypes";
 import {
@@ -55,7 +55,6 @@ function pressureScale(p?: number): number {
  */
 export function useDrawing(
   refs: CanvasRefs,
-  getDPR: () => number,
   initial: { tool?: Tool; color?: string; lineWidths?: LineWidths } = {},
   opts: { coordMapper?: (p: Point) => Point } = {},
 ) {
@@ -174,6 +173,15 @@ export function useDrawing(
       return action.opacity * Math.max(0, remain);
     }
     return action.opacity;
+  }
+
+  /** 渐隐笔画是否已过期（透明度衰减到 0，应从历史中消失） */
+  function isExpired(a: DrawAction): boolean {
+    return (
+      a.tool === "fading" &&
+      a.bornAt !== undefined &&
+      Date.now() - a.bornAt >= FADE_DURATION_MS
+    );
   }
 
   /** 二次贝塞尔中点平滑绘制一段（荧光笔/橡皮：固定宽度） */
@@ -405,7 +413,9 @@ export function useDrawing(
     const src = blurComposite ?? blurBase;
     if (!src || action.points.length === 0) return;
     const cell = blurCell.value;
-    const dprScale = Math.max(1, ctx.getTransform().a);
+    // 合成底图按 overlay 分辨率（dpr）存储；目标 ctx 变换可能不同（导出 scale）。
+    // 源区坐标必须按合成底图的实际分辨率换算，否则高 DPI 导出（scale ≠ dpr）时采样错位。
+    const srcScale = dpr;
     // 源区放大系数：越大越糊（源区压进目标块时的摊平程度）
     const sourceScale = 3;
 
@@ -446,10 +456,10 @@ export function useDrawing(
     for (const s of samples) {
       ctx.drawImage(
         src,
-        (s.x - half) * dprScale,
-        (s.y - half) * dprScale,
-        srcSize * dprScale,
-        srcSize * dprScale,
+        (s.x - half) * srcScale,
+        (s.y - half) * srcScale,
+        srcSize * srcScale,
+        srcSize * srcScale,
         s.x - cell / 2,
         s.y - cell / 2,
         cell,
@@ -593,13 +603,12 @@ export function useDrawing(
    * action 的条目（保持撤销一致性）；未过期则周期重绘让透明度逐帧下降。
    */
   function fadeTick() {
-    const now = Date.now();
     const expired = new Set<DrawAction>();
     let hasFading = false;
     for (const a of history.value) {
       if (a.tool === "fading") {
         hasFading = true;
-        if (a.bornAt !== undefined && now - a.bornAt >= FADE_DURATION_MS) {
+        if (isExpired(a)) {
           expired.add(a);
         }
       }
@@ -610,7 +619,7 @@ export function useDrawing(
         for (const a of entry.actions) {
           if (a.tool === "fading") {
             hasFading = true;
-            if (a.bornAt !== undefined && now - a.bornAt >= FADE_DURATION_MS) {
+            if (isExpired(a)) {
               expired.add(a);
             }
           }
@@ -672,7 +681,9 @@ export function useDrawing(
       scheduleRender();
       return;
     }
-    // 自适应最小采样距离（视角面积大则采样更稀）
+    // 固定最小采样距离（CSS px²）：低于该距离的移动不产生新采样点。
+    // 高频 pointermove 会产生大量亚像素位移，全部采样会让贝塞尔曲线抖动；
+    // 0.5px² 阈值在平滑度与点密度之间取平衡（与视角面积无关的固定值）。
     const minDistSq = 0.5;
     if (lastPoint) {
       const dx = p.x - lastPoint.x;
@@ -771,8 +782,10 @@ export function useDrawing(
       const removed = history.value.splice(history.value.length - count, count);
       redoStack.value.push({ type: "add", actions: removed });
     } else {
-      history.value.push(...entry.actions);
-      redoStack.value.push(entry);
+      // clear：只恢复未过期的动作（已渐隐消失的不复活为幽灵笔画）
+      const alive = entry.actions.filter((a) => !isExpired(a));
+      history.value.push(...alive);
+      redoStack.value.push({ type: "clear", actions: alive });
     }
     blurCompositeDirty = true;
     historyDirty = true;
@@ -786,9 +799,15 @@ export function useDrawing(
       history.value.push(...entry.actions);
       undoStack.value.push(entry);
     } else {
-      const count = entry.actions.length;
-      const removed = history.value.splice(history.value.length - count, count);
-      undoStack.value.push({ type: "add", actions: removed });
+      // clear：只移除当前 history 中实际存在的动作（部分可能已被渐隐清理），
+      // 避免按 entry 原始数量 splice 造成 count 错位、误删其他笔画
+      const present = entry.actions.filter((a) => history.value.includes(a));
+      const removed = history.value.splice(
+        history.value.length - present.length,
+        present.length,
+      );
+      // 逆操作仍是 clear（撤销时应把移除的动作推回 history）
+      undoStack.value.push({ type: "clear", actions: removed });
     }
     // 重做带回渐隐笔画时重启轮询（可能已因栈中无渐隐而停止）
     if (entry.actions.some((a) => a.tool === "fading")) ensureFadeTimer();
@@ -888,13 +907,12 @@ export function useDrawing(
       rafId = null;
     }
     stopFadeTimer();
+    // 模块级马赛克底图/合成图随实例销毁清空，避免跨实例残留
+    blurBase = null;
+    blurBaseColor = null;
+    blurComposite = null;
+    blurCompositeDirty = true;
   }
-
-  // 配置变更 → 重绘（颜色/线宽不影响已提交笔画，但保留便于扩展）
-  watch(lineWidths, () => {
-    historyDirty = true;
-    scheduleRender();
-  });
 
   return {
     currentTool,
@@ -920,6 +938,5 @@ export function useDrawing(
     setBlurBaseColor,
     hasBlurBase,
     destroy,
-    getDPR,
   };
 }

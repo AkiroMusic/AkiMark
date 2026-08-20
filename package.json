@@ -4,6 +4,9 @@
   "description": "AkiMark - 轻量级屏幕标注工具（Ethereal Glass）",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

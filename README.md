@@ -6,7 +6,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **Beta** — This is an informal preview release (v0.1.0). Features and behavior may change; expect rough edges.
+> ⚠️ **Beta** — This is an informal preview release (v0.2.0). Features and behavior may change; expect rough edges.
 
 ---
 
@@ -200,7 +200,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **内测版** — 这是非正式的内测预览版（v0.1.0）。功能与行为可能随时调整，可能尚有不完善之处。
+> ⚠️ **内测版** — 这是非正式的内测预览版（v0.2.0）。功能与行为可能随时调整，可能尚有不完善之处。
 
 ---
 
@@ -382,4 +382,4 @@ npm run icon         # 从 assets/icon-1024.png 生成
 
 ---
 
-*AkiroMusic 用 💙 打造 —— 内测版 v0.1.0*
+*AkiroMusic 用 💙 打造 —— 内测版 v0.2.0*

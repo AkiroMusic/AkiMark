@@ -3,7 +3,6 @@ mod commands;
 mod config;
 mod error;
 mod log;
-mod monitor;
 mod overlay;
 mod shortcuts;
 mod win32;
@@ -76,29 +75,29 @@ pub fn run() {
             commands::handle_focus_event(window.app_handle(), event);
         })
         .setup(|app| {
-            log::init(&app.handle());
+            log::init(app.handle());
             crate::log::install_log_facade();
             crate::log::log("setup 开始");
 
-            let config = load_config(&app.handle());
+            let config = load_config(app.handle());
             app.manage(AppState::new(config));
 
-            setup_tray(&app.handle())?;
-            shortcuts::register_shortcuts(&app.handle())?;
+            setup_tray(app.handle())?;
+            shortcuts::register_shortcuts(app.handle())?;
 
             // 默认启动后打开设置界面（config 可关）
             let state = app.state::<AppState>();
             let open_on_startup = state
                 .config
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .general
                 .open_settings_on_startup;
             crate::log::log(&format!(
                 "setup: open_settings_on_startup = {open_on_startup}"
             ));
             if open_on_startup {
-                open_settings(&app.handle());
+                open_settings(app.handle());
             }
 
             crate::log::log("setup 完成");
@@ -107,15 +106,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_general,
-            commands::save_line_widths,
             commands::save_drawing_prefs,
             commands::save_shortcuts,
             commands::get_shortcut_conflicts,
-            commands::save_locale,
             commands::exit_drawing,
             commands::enter_penetration_mode,
             commands::exit_penetration_mode,
-            commands::toggle_penetration_mode,
             commands::set_board_active,
             commands::capture_screen,
             commands::save_export,
@@ -134,8 +130,15 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &settings, &clear, &quit])?;
 
+    // 无默认图标时跳过托盘创建（托盘是增强功能，不应阻塞启动）
+    let Some(icon) = app.default_window_icon() else {
+        crate::log::log("setup_tray: 无默认窗口图标，跳过托盘创建");
+        eprintln!("[akimark] 无默认窗口图标，跳过托盘创建");
+        return Ok(());
+    };
+
     let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon.clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
