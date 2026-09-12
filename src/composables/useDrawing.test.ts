@@ -400,4 +400,34 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     const sx = drawCalls[0][1] as number;
     expect(sx).toBeCloseTo(100 - half);
   });
+
+  it("F3: 马赛克颗粒按动作自身线宽锁定，切换工具后全量重绘不变形", () => {
+    const { drawing, historyCtx } = setup(); // dpr = 1
+    drawing.lineWidths.value = { stroke: 40, highlighter: 10, eraser: 12 };
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(100, 100));
+    drawing.drawTo(pointer(200, 100));
+    drawing.endDraw();
+    flushRaf();
+
+    // 切到细笔后经 undo/redo 触发全量重绘：颗粒度必须仍是绘制时刻的
+    drawing.lineWidths.value = { stroke: 3, highlighter: 10, eraser: 12 };
+    drawing.currentTool.value = "pen";
+    drawing.undo();
+    flushRaf();
+    drawing.redo();
+    flushRaf();
+
+    const drawImageMock = historyCtx.ctx.drawImage as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const drawCalls = drawImageMock.mock.calls;
+    expect(drawCalls.length).toBeGreaterThan(0);
+    // cell = max(3, round(40 * 0.8)) = 32；源区宽 = cell * sourceScale(3) * dpr(1)
+    const cell = 32;
+    expect(drawCalls[0][3]).toBe(cell * 3);
+    // 目标块尺寸 = cell（若误读当前工具线宽 3，此处会变成 3×3 的细颗粒）
+    expect(drawCalls[0][7]).toBe(cell);
+  });
 });

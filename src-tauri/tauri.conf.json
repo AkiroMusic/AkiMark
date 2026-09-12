@@ -23,7 +23,7 @@
         "visible": false,
         "width": 800,
         "height": 600,
-        "additionalBrowserArgs": "--disable-gpu-compositing"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing"
       }
     ],
     "security": {

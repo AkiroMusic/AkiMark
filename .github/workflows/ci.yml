@@ -3,12 +3,27 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "reference-markeron-master/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "reference-markeron-master/**"
+
+# 同分支新推送取消旧 run；只读权限（测试流水线不需要写权限）
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   frontend:
-    name: Frontend (vue-tsc + vite)
+    name: Frontend (vue-tsc + vite + oxlint)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -21,34 +36,51 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
       - name: Run unit tests
         run: npm run test
 
       - name: Type check & build
         run: npm run build:fe
 
-      - name: Format check
-        run: npm run format:check
-
   backend:
-    name: Backend (cargo check + test)
+    name: Backend (fmt + clippy + check + test)
     # AkiMark uses win32 APIs (src/win32.rs), so it only builds on Windows.
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: Cargo check
+      - name: Rustfmt check
         working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Cargo check (deny warnings)
+        working-directory: src-tauri
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo check
 
+      # dev profile：release 关闭 debug 断言且 LTO 链接极慢，测试不需要
       - name: Cargo test
         working-directory: src-tauri
-        run: cargo test --release
+        run: cargo test

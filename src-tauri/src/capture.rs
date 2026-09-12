@@ -34,10 +34,12 @@ mod imp {
 
         let pixels = capture_monitor(x, y, w, h).ok_or(AppError::CaptureFailed)?;
 
-        // BGRA → RGBA（PNG 需要）
+        // BGRA → RGBA（PNG 需要）；GetDIBits 的 32bpp 第 4 字节（alpha）按文档是
+        // 未定义值（常见为 0），必须强制置 0xFF，否则部分机器导出 PNG 整张透明
         let mut pixels = pixels;
         for px in pixels.chunks_exact_mut(4) {
             px.swap(0, 2);
+            px[3] = 0xFF;
         }
 
         let img = image::RgbaImage::from_raw(w, h, pixels).ok_or(AppError::CaptureFailed)?;
@@ -108,11 +110,8 @@ mod imp {
             ReleaseDC(std::ptr::null_mut(), hdc_screen);
 
             // GetDIBits 返回实际复制的扫描行数：必须等于 h，否则像素缓冲不完整
+            // （句柄已全部释放，只能丢弃本次结果）
             if lines != h as i32 {
-                SelectObject(hdc_mem, old);
-                DeleteObject(hbmp);
-                DeleteDC(hdc_mem);
-                ReleaseDC(std::ptr::null_mut(), hdc_screen);
                 return None;
             }
             Some(pixels)

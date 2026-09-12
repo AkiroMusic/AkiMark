@@ -29,7 +29,7 @@ pub fn init(app: &tauri::AppHandle) {
         }
     }
 
-    // panic hook：崩溃信息写入日志（若已安装过则跳过，避免重复包裹）
+    // panic hook：崩溃信息写入日志（set_hook 会覆盖既有 hook，本应用仅在 init 调用一次）
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("[panic] {info}");
         log(&msg);
@@ -44,7 +44,12 @@ pub fn install_log_facade() {
     if let Err(e) = log::set_logger(&FACADE) {
         eprintln!("[akimark] install_log_facade: set_logger 失败: {e}");
     }
+    // release 只转发 Info 及以上（tauri/wry 内部 debug 日志量大且无排障价值）；
+    // dev 构建记 Debug 便于排查
+    #[cfg(debug_assertions)]
     log::set_max_level(log::LevelFilter::Debug);
+    #[cfg(not(debug_assertions))]
+    log::set_max_level(log::LevelFilter::Info);
 }
 
 struct FileLogFacade;
@@ -73,7 +78,11 @@ pub fn log(msg: &str) {
     }
 }
 
+/// 写入互斥锁：多线程并发 append 可能行交错，且轮转 truncate 需要互斥
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
 fn write_line(path: &PathBuf, line: &str) {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // 简单大小上限：超过 10MB 直接清空重写，避免日志无限增长
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.len() > LOG_MAX_BYTES {

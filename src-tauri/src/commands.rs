@@ -53,7 +53,10 @@ fn validate_general(general: &mut GeneralConfig) -> AppResult<()> {
 /// 截取光标所在显示器的画面（PNG base64）。
 /// 前端会在调用前隐藏工具栏/光标/聚光灯等 UI；本命令负责隐藏 overlay 窗口本身，
 /// 确保截到纯净桌面底图，随后合成标注笔画并保存。
-#[tauri::command]
+///
+/// `async` 标记：sleep + 全屏 BitBlt + PNG 编码耗时可达数百 ms，
+/// 若在主线程同步执行会冻结所有窗口/托盘/热键，故挪到异步运行时线程池。
+#[tauri::command(async)]
 pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<String> {
     // 截屏期间抑制"失焦自动穿透"：隐藏窗口会导致失焦，避免误触发穿透模式。
     // 计数语义：若隐藏/显示期间用户又激活过，短臂复位不会清掉长臂。
@@ -97,7 +100,9 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
 
 /// 把前端合成好的 PNG（base64）保存到导出目录，返回文件完整路径。
 /// 目录优先级：配置的 export_dir → 桌面 → 应用数据目录。
-#[tauri::command]
+///
+/// `async` 标记：50MB base64 解码 + 磁盘写入不应阻塞主线程（否则 UI/托盘/热键冻结）。
+#[tauri::command(async)]
 pub fn save_export(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -188,6 +193,9 @@ pub fn save_general(
 
 /// 保存"上次使用的绘制预设"（工具/颜色/线宽），下次启动沿用。
 /// 由 overlay 在用户改动工具/颜色/线宽时（防抖后）调用。
+///
+/// 不广播 config-changed：这是 overlay 自身的会话状态回存，
+/// 广播只会把陈旧快照弹回 overlay（用户在防抖窗口内的最新改动会被回滚）。
 #[tauri::command]
 pub fn save_drawing_prefs(
     app: AppHandle,
@@ -208,7 +216,6 @@ pub fn save_drawing_prefs(
     let config_snapshot = config.clone();
     drop(config);
     config::save_config(&app, &config_snapshot)?;
-    config::broadcast_config(&app, &config_snapshot);
     Ok(())
 }
 

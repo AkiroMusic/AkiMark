@@ -5,6 +5,101 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-13
+
+Zero-defect audit: correctness fixes found by a full code review, plus
+hardening of CI, permissions, and logging.
+
+### Changed
+
+- **Tool hotkey remap** (post-0.2.0, now documented): fading pen `9` → `2`,
+  line/rect/circle/arrow `4`/`5`/`6`/`7` → `5`/`6`/`7`/`8`, text `8` → `9`
+  (highlighter `3`, eraser `4`, blur `0` unchanged). The 0.2.0 entries below
+  reflect the mapping at release time.
+- **`config-changed` no longer overwrites session state** — the overlay only
+  applies non-session fields (locale / board default / preserve drawings) from
+  broadcast config; tool/color/line-width presets are applied once at startup.
+  `save_drawing_prefs` no longer broadcasts, so a stale echo can no longer roll
+  back the user's latest choice during the 500 ms debounce window.
+- **Keyboard auto-repeat is ignored for mode toggles** (`B`/Space/X/F/M/Z) —
+  holding the key no longer re-triggers `invoke`/capture side effects.
+  Meta combos (`Ctrl+Z`/`Ctrl+Y`) still repeat.
+- **Shortcut recorder reworked** — parses the physical key via `e.code`, so
+  `Ctrl+Shift+1`-style combos are recordable; `Esc`/`Tab` now cancel recording
+  instead of being bindable; modifier-only presses no longer clear the field.
+- **Hardened WebView2 args** — `additionalBrowserArgs` now includes wry's
+  default `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`
+  (setting the field previously replaced the defaults entirely).
+- **Release logging** — tauri/wry internal logs are capped at Info level in
+  release builds; log writes are mutex-serialized; key shortcut/toggle errors
+  go to the file log instead of `eprintln!` (invisible in release).
+
+### Fixed
+
+- **Zoom-mode drawing landed away from the cursor** — the zoom layer's visual
+  origin followed the live cursor while the inverse mapping used the anchor
+  frozen at pointer-down (offset = `(1-z)×(cursor−anchor)`). During a stroke
+  the origin is now locked to the same anchor; `mapToCapture` was extracted as
+  a pure function with round-trip unit tests. Right-button erasing in zoom mode
+  now freezes its own anchor instead of reusing a stale one.
+- **Mosaic granularity changed when switching tools** — re-renders sized mosaic
+  cells from the *current* tool width; they are now locked to the stroke's own
+  captured width (regression test F3).
+- **Fading-pen "beading"** — per-segment stroking at alpha < 1 double-composited
+  overlapping round caps; fading strokes now render as a single smoothed path.
+- **Settings window ignored the saved locale** — it always followed the system
+  language; the configured locale is now applied on load.
+- **GDI double release in `capture.rs`** — the `GetDIBits` failure path cleaned
+  up already-freed handles (use-after-free of recycled GDI handles); the dead
+  second cleanup block was removed.
+- **Screenshots could come out fully transparent on some machines** — the alpha
+  byte from `GetDIBits` is undefined by contract; it is now forced to `0xFF`.
+- **Capture/export blocked the whole app** — both commands ran synchronously on
+  the main thread (80 ms sleep + full-screen BitBlt + PNG encode / 50 MB base64
+  decode); they are now `#[tauri::command(async)]`.
+- **Click-through exit clamped the cursor to the wrong monitor** — multi-monitor
+  setups clamped to the cursor's monitor instead of the overlay's; the cursor is
+  now clamped to the canvas monitor.
+- **Activation failure could leave the cursor clipped with no window** —
+  `ClipCursor` is applied only after `show()`/`set_focus()` succeed.
+- **Pointer race** — starting a second gesture (e.g. tablet palm touch) during
+  an active stroke silently dropped the in-progress stroke; new pointer-downs
+  are now ignored while one is active.
+- **Resize storms** — resize handling is debounced (80 ms) instead of tearing
+  down both canvases per event.
+- **Orphan watcher** — the drawing-prefs watcher was registered after the first
+  `await` in `onMounted`, so it never auto-disposed; it now registers in the
+  synchronous setup phase.
+- **Duplicate conflict entries** — re-saving an occupied shortcut reported the
+  same accelerator twice in the conflict list.
+- **Concurrent config saves could clobber each other** — the atomic-write temp
+  file is now process-unique instead of a shared fixed name.
+- **Corrupted `config.json` was silently overwritten** — the broken file is now
+  renamed to `config.json.bak` before falling back to defaults.
+
+### Security
+
+- **Capabilities minimized** — 15 unused `core:window:*` grants and 3 unused
+  `autostart:*` grants were removed (all window/autostart operations happen in
+  Rust, outside the ACL); the webview now only holds `core:default` +
+  `dialog:allow-open`.
+
+### Removed
+
+- `reference-markeron-master/` (a third-party reference snapshot, ~69% of
+  tracked files) is no longer tracked; the README credit links to the upstream
+  repository.
+- Dead code: unused `overlayRoot` template ref, `ToolDef.translucent` flag,
+  unused `settings.close` i18n keys, and `.icon-btn` styles.
+
+### Engineering
+
+- CI now enforces `cargo fmt --check`, `cargo clippy -D warnings`,
+  `cargo check` with `-D warnings`, and oxlint for the frontend; tests run on
+  the dev profile; the workflow declares read-only permissions, timeouts,
+  concurrency cancellation, and path filters.
+- `@tauri-apps/api` moved to `dependencies` (it is a runtime dependency).
+
 ## [0.2.0] - 2026-08-14
 
 ### Added
@@ -107,5 +202,6 @@ annotation tool built with Tauri v2 + Vue 3.
 - CI pipeline (runs frontend checks and Windows backend build) and Node-20
   action deprecations.
 
+[0.2.1]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AkiroMusic/AkiMark/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AkiroMusic/AkiMark/releases/tag/v0.1.0

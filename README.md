@@ -184,7 +184,7 @@ Settings are persisted as JSON in the OS app-config directory (`%APPDATA%\com.ak
 ## 🙏 Acknowledgements
 
 - [Tauri](https://tauri.app/) — the framework that makes a ~4MB annotation tool possible
-- [markeron](https://github.com/) — inspiration for the overlay architecture (kept as a reference in `reference-markeron-master/`)
+- [markeron (ifer47/markeron)](https://github.com/ifer47/markeron) — inspiration for the overlay architecture (snapshot taken 2026-08, no longer tracked in the repository)
 
 ---
 
@@ -378,7 +378,7 @@ npm run icon         # 从 assets/icon-1024.png 生成
 ## 🙏 致谢
 
 - [Tauri](https://tauri.app/) — 让约 4MB 大小的标注工具成为可能的框架
-- [markeron](https://github.com/) — 覆盖层架构的灵感来源（在 `reference-markeron-master/` 中保留作为参考）
+- [markeron (ifer47/markeron)](https://github.com/ifer47/markeron) — 覆盖层架构的灵感来源（快照取自 2026-08，参考副本不再入库）
 
 ---
 
