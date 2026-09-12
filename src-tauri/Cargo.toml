@@ -1,6 +1,7 @@
 [package]
 name = "akimark"
-version = "0.2.0"
+version = "0.2.1"
+rust-version = "1.77.2"
 description = "AkiMark - 轻量级屏幕标注工具（Ethereal Glass）"
 authors = ["Akiro"]
 license = "MIT"

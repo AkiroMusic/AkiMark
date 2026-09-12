@@ -11,6 +11,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import ToolToolbar from "./ToolToolbar.vue";
 import { useDrawing } from "../composables/useDrawing";
+import { mapToCapture } from "../composables/zoomMapping";
 import { COLOR_PALETTE } from "../constants/colors";
 import {
   BOARD_COLORS,
@@ -101,17 +102,19 @@ function cursorTransform(): string {
   return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
 }
 
-/** 缩放逆映射：把屏幕坐标（client）映射回捕获空间坐标；未缩放/无锚点时恒等 */
-function mapToCapture(p: Point, anchor: Point | null): Point {
-  const z = zoom.value;
-  if (z <= 0 || !anchor) return p;
-  return {
-    x: anchor.x + (p.x - anchor.x) / z,
-    y: anchor.y + (p.y - anchor.y) / z,
-    pressure: p.pressure,
-  };
-}
-const coordMapper = (p: Point): Point => mapToCapture(p, zoomAnchor.value);
+/** 缩放逆映射：把屏幕坐标（client）映射回捕获空间坐标（纯函数见 zoomMapping.ts）；
+ * 未缩放/无锚点时恒等。注意渲染端 transform-origin 必须与 zoomAnchor 同源（见 zoomOrigin）。 */
+const coordMapper = (p: Point): Point =>
+  mapToCapture(p, zoomAnchor.value, zoom.value);
+
+/**
+ * 缩放视觉原点：必须与 mapToCapture 的逆映射锚点同源。
+ * 笔画进行中锁定为按下时冻结的 zoomAnchor（视图静止，笔画精确落在光标下）；
+ * 空闲时跟随光标（放大镜式平移）。若两处不同源，笔画偏离量 = (1-z)×(光标-锚点)。
+ */
+const zoomOrigin = computed(() =>
+  strokeActive.value && zoomAnchor.value ? zoomAnchor.value : cursorPos.value,
+);
 
 const drawing = useDrawing(
   {
@@ -122,7 +125,7 @@ const drawing = useDrawing(
   { coordMapper },
 );
 
-/** 应用 config 中的默认工具/颜色/线宽（启动时与 config 变更时） */
+/** 应用配置守卫：applyConfig 批量赋值期间抑制"用户改动"回存 */
 let applyingConfig = false;
 let applyingConfigTimer: number | null = null;
 let prefsSaveTimer: number | null = null;
@@ -131,23 +134,17 @@ let prefsSaveQueued = false;
 /** 配置项 preserveDrawings：为 true 时退出/重进标注保留已有笔迹 */
 let preserveDrawings = false;
 
+/** 启动时完整应用 config：绘制预设 + 通用设置 */
 function applyConfig(cfg: AppConfig) {
   applyingConfig = true;
   drawing.currentTool.value = cfg.general.defaultTool;
   drawing.currentColor.value = cfg.general.defaultColor;
-  boardDefault.value = cfg.general.boardDefault ?? "white";
   drawing.lineWidths.value = {
     stroke: cfg.general.lineWidths.stroke,
     highlighter: cfg.general.lineWidths.highlighter,
     eraser: cfg.general.lineWidths.eraser,
   };
-  preserveDrawings = cfg.general.preserveDrawings;
-  // 应用配置的语言（config.json 优先于 navigator.language 默认值）
-  if (cfg.general.locale === "en" || cfg.general.locale === "zh-CN") {
-    setLocale(cfg.general.locale);
-  }
-  // theme 字段：style.css 只有一套 Ethereal Glass 深色变量，无浅色主题实现，
-  // 纯外观配置暂不生效（保持现状，仅确保 locale 已应用）
+  applyConfigUpdate(cfg);
   // watcher 是微任务，等它跑完再复位，避免把"应用配置"误判为用户改动触发回存；
   // 用定时器句柄 + 覆盖式复位，防止同一 tick 内两次 config-changed 提前清掉守卫
   if (applyingConfigTimer) window.clearTimeout(applyingConfigTimer);
@@ -155,6 +152,23 @@ function applyConfig(cfg: AppConfig) {
     applyingConfig = false;
     applyingConfigTimer = null;
   }, 0);
+}
+
+/**
+ * 应用 config 更新中的"非会话状态"字段（config-changed 事件路径）。
+ * 刻意不覆盖 currentTool/currentColor/lineWidths：它们是 overlay 的会话状态
+ * （用户随手改动 + 防抖回存）；设置窗口保存任何设置都会广播全量 config，
+ * 若无条件覆盖预设，防抖保存期间的用户最新选择会被陈旧快照回滚。
+ */
+function applyConfigUpdate(cfg: AppConfig) {
+  boardDefault.value = cfg.general.boardDefault ?? "white";
+  preserveDrawings = cfg.general.preserveDrawings;
+  // 应用配置的语言（config.json 优先于 navigator.language 默认值）
+  if (cfg.general.locale === "en" || cfg.general.locale === "zh-CN") {
+    setLocale(cfg.general.locale);
+  }
+  // theme 字段：style.css 只有一套 Ethereal Glass 深色变量，无浅色主题实现，
+  // 纯外观配置暂不生效（保持现状，仅确保 locale 已应用）
 }
 
 /** 绘制预设防抖保存：用户改工具/颜色/线宽后 500ms 内无新改动才落盘 */
@@ -205,6 +219,8 @@ async function persistDrawingPrefs() {
 
 let pointerDown = false;
 let rmbErasing = false;
+/** 绘制手势进行中（响应式镜像 pointerDown/rmbErasing）：模板据此把缩放视觉原点锁定到锚点 */
+const strokeActive = ref(false);
 /** 右键按住擦除前的工具：松开右键后恢复 */
 let prevToolBeforeRmb: Tool | null = null;
 let toastTimer: number | null = null;
@@ -233,11 +249,17 @@ function onPointerDown(e: PointerEvent) {
   if (uiLocked) return;
   // 点击工具栏区域不画
   if (isOverToolbar(e)) return;
+  // 已有手势进行中（左键绘制/右键擦除）时忽略新按键：startDraw 会覆盖
+  // 唯一的 currentAction 槽位，进行中的笔画被静默丢弃（数位板手掌误触可触发）
+  if (pointerDown || rmbErasing) return;
   cursorVisible.value = true;
 
   // 右键 = 按住擦除：优先于文字/马赛克分支处理（右键不应触发文字输入或底图截屏）
   if (e.button === 2) {
     rmbErasing = true;
+    strokeActive.value = true;
+    // 右键橡皮同样冻结缩放锚点（与逆映射同源），否则放大态下擦除位置偏移
+    zoomAnchor.value = { x: e.clientX, y: e.clientY };
     prevToolBeforeRmb = drawing.currentTool.value;
     drawing.currentTool.value = "eraser";
     drawing.startDraw(e);
@@ -265,6 +287,7 @@ function onPointerDown(e: PointerEvent) {
   zoomAnchor.value = { x: e.clientX, y: e.clientY };
 
   pointerDown = true;
+  strokeActive.value = true;
   drawing.startDraw(e);
   capturePointer(e);
 }
@@ -296,6 +319,7 @@ function endPointerInteraction() {
   prevToolBeforeRmb = null;
   pointerDown = false;
   rmbErasing = false;
+  strokeActive.value = false;
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -368,8 +392,11 @@ function commitText(cancel = false) {
   if (!ed) return;
   textEditing.value = null;
   if (!cancel && ed.value.trim()) {
-    // 缩放模式下把屏幕坐标逆变换回捕获空间再落笔
-    drawing.startText(mapToCapture({ x: ed.x, y: ed.y }, ed.anchor), ed.value);
+    // 缩放模式下把屏幕坐标逆变换回捕获空间再落笔（anchor 为输入框打开时刻的冻结锚点）
+    drawing.startText(
+      mapToCapture({ x: ed.x, y: ed.y }, ed.anchor, zoom.value),
+      ed.value,
+    );
   }
 }
 
@@ -403,6 +430,16 @@ function onKeyDown(e: KeyboardEvent) {
     return;
   }
 
+  // 模式切换类快捷键（板书/工具栏/穿透/聚光灯/缩放）带副作用（invoke/截屏/状态翻转），
+  // 按住不放的 OS 自动重复会反复触发，统一忽略 repeat 事件。
+  // meta 组合（Ctrl+Z/Y/C）除外：按住连续撤销/重做是合法操作。
+  if (
+    e.repeat &&
+    !meta &&
+    ["b", "B", " ", "x", "X", "f", "F", "m", "M", "z", "Z"].includes(k)
+  ) {
+    return;
+  }
   switch (k) {
     case "1":
     case "2":
@@ -826,7 +863,9 @@ async function setupListeners() {
   });
 
   configListener = await listen<AppConfig>("config-changed", (e) => {
-    applyConfig(e.payload);
+    // 只应用非会话状态字段：工具/颜色/线宽是本窗口的会话状态，
+    // 被广播回滚会覆盖用户在防抖保存窗口内的最新选择（见 applyConfigUpdate）
+    applyConfigUpdate(e.payload);
   });
 
   modeListener = await listen<string>("overlay-mode-changed", (e) => {
@@ -871,20 +910,27 @@ async function setupListeners() {
 }
 
 // ---- 生命周期 ----
+/** resize 防抖：DPI/显示器切换时 resize 连发，每次都会清空并全量重绘画布 */
+let resizeTimer: number | null = null;
+function onResizeDebounced() {
+  if (resizeTimer) window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    resizeCanvases();
+  }, 80);
+}
+
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
-  window.addEventListener("resize", resizeCanvases);
+  window.addEventListener("resize", onResizeDebounced);
   // 滚轮调缩放倍率/聚光灯半径：Vue 模板对 wheel 默认 passive，preventDefault 需手动非 passive 监听
   window.addEventListener("wheel", onWheel, { passive: false });
   // 指针捕获丢失兜底：窗口级 pointerup 确保笔画不悬挂
   window.addEventListener("pointerup", onWindowPointerUp);
-  try {
-    await setupListeners();
-  } catch (err) {
-    console.warn("[akimark] setup_listeners failed", err);
-  }
 
-  // 工具/颜色/线宽变化 → 防抖保存绘制预设（下次启动沿用）
+  // 工具/颜色/线宽变化 → 防抖保存绘制预设（下次启动沿用）。
+  // 必须在首个 await 之前注册：await 之后的代码运行在微任务续体里，
+  // Vue 当前实例已复位，watcher 不会随组件卸载自动停止（HMR/重挂载时泄漏）。
   // 先注册 watcher 再加载 config：applyConfig 期间由 applyingConfig 守卫跳过回存
   watch([drawing.currentTool, drawing.currentColor, drawing.lineWidths], () => {
     if (applyingConfig) return;
@@ -892,6 +938,12 @@ onMounted(async () => {
     if (rmbErasing) return;
     schedulePrefsSave();
   });
+
+  try {
+    await setupListeners();
+  } catch (err) {
+    console.warn("[akimark] setup_listeners failed", err);
+  }
 
   // 加载 config 应用默认工具/颜色/线宽
   try {
@@ -909,7 +961,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeyDown);
-  window.removeEventListener("resize", resizeCanvases);
+  window.removeEventListener("resize", onResizeDebounced);
   window.removeEventListener("wheel", onWheel);
   window.removeEventListener("pointerup", onWindowPointerUp);
   clearListener?.();
@@ -921,6 +973,10 @@ onBeforeUnmount(() => {
   if (prefsSaveTimer) {
     window.clearTimeout(prefsSaveTimer);
     prefsSaveTimer = null;
+  }
+  if (resizeTimer) {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = null;
   }
   void persistDrawingPrefs();
   // 清理 Toast / 文字聚焦定时器与进行中标志，避免卸载后回调操作已销毁的 DOM
@@ -944,7 +1000,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    ref="overlayRoot"
     class="overlay-root"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -956,14 +1011,15 @@ onBeforeUnmount(() => {
     <!-- 黑白板模式：纯色全屏底（z 轴最底，位于画布之下） -->
     <div v-if="boardMode !== 'none'" class="board-layer" :class="boardMode" />
 
-    <!-- 缩放 / 普通布局：wrapper 恒存在，zoom>0 时整体放大（截图底图 + 双画布同一变换，笔画与画面视觉对齐） -->
+    <!-- 缩放 / 普通布局：wrapper 恒存在，zoom>0 时整体放大（截图底图 + 双画布同一变换，笔画与画面视觉对齐）；
+         视觉原点用 zoomOrigin：笔画进行中锁定为冻结锚点（与 mapToCapture 同源），空闲时跟随光标 -->
     <div
       class="zoom-layer"
       :style="
         zoom > 0
           ? {
               transform: `scale(${zoom})`,
-              transformOrigin: `${cursorPos.x}px ${cursorPos.y}px`,
+              transformOrigin: `${zoomOrigin.x}px ${zoomOrigin.y}px`,
             }
           : undefined
       "

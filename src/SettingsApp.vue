@@ -8,7 +8,7 @@ import { useI18n } from "./i18n";
 import { buildGeneralPayload } from "./settingsGeneral";
 import type { Tool } from "./composables/drawingTypes";
 
-const { t } = useI18n();
+const { t, setLocale } = useI18n();
 
 // ---- 表单状态 ----
 const shortcuts = reactive<Shortcuts>({
@@ -99,6 +99,11 @@ onMounted(async () => {
     locale.value = cfg.general.locale;
     theme.value = cfg.general.theme;
     preserveDrawings.value = cfg.general.preserveDrawings;
+    // 应用已保存的界面语言：否则本窗口始终跟随系统语言，
+    // 配置 locale=en 时 overlay 英文而设置窗口中文（i18n 只对 overlay 生效）
+    if (cfg.general.locale === "en" || cfg.general.locale === "zh-CN") {
+      setLocale(cfg.general.locale);
+    }
 
     try {
       autostart.value = await invoke<boolean>("get_autostart");
@@ -157,10 +162,51 @@ function startRecording(key: ShortcutKey) {
   recordingKey.value = key;
 }
 
+/** 从 e.code 解析主键（物理键位，不随 Shift 变化：Shift+1 的 e.key 是 "!"，
+ * e.code 仍是 Digit1 → 可录制 Ctrl+Shift+1 这类组合） */
+function mainKeyFromCode(code: string): string | null {
+  if (code.startsWith("Key")) {
+    const k = code.slice(3);
+    return k.length === 1 && /^[A-Z]$/.test(k) ? k : null;
+  }
+  if (code.startsWith("Digit")) {
+    const d = code.slice(5);
+    return /^[0-9]$/.test(d) ? d : null;
+  }
+  if (/^F([1-9]|1[0-2])$/.test(code)) return code;
+  if (code === "Space") return "Space";
+  return null;
+}
+
+/** 修饰键自身的 e.code（按下修饰键时等待主键，不视为无效输入） */
+const MODIFIER_CODES = [
+  "ControlLeft",
+  "ControlRight",
+  "AltLeft",
+  "AltRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "MetaLeft",
+  "MetaRight",
+];
+
 function onKeyDownCapture(e: KeyboardEvent) {
   if (!recordingKey.value) return;
   e.preventDefault();
   e.stopPropagation();
+
+  // Esc：取消录制而非绑定。Esc 有系统级语义（退出全屏等），不适合做全局热键
+  if (e.key === "Escape") {
+    recordingKey.value = null;
+    return;
+  }
+  // Tab：焦点导航键，取消录制避免误绑
+  if (e.key === "Tab") {
+    recordingKey.value = null;
+    return;
+  }
+  // 只按修饰键：等待主键（不清除录制态）
+  if (MODIFIER_CODES.includes(e.code)) return;
 
   const parts: string[] = [];
   if (e.ctrlKey) parts.push("Ctrl");
@@ -168,34 +214,8 @@ function onKeyDownCapture(e: KeyboardEvent) {
   if (e.shiftKey) parts.push("Shift");
   if (e.metaKey) parts.push("Super");
 
-  const k = e.key === " " ? "Space" : e.key;
-  // 只接受修饰键 + 一个功能键/字母/数字
-  const isPlainKey =
-    /^[a-zA-Z0-9]$/.test(k) ||
-    [
-      "F1",
-      "F2",
-      "F3",
-      "F4",
-      "F5",
-      "F6",
-      "F7",
-      "F8",
-      "F9",
-      "F10",
-      "F11",
-      "F12",
-      "Space",
-      "Tab",
-      "Enter",
-      "Escape",
-    ].includes(k);
-  if (!isPlainKey) return;
-
-  // 去掉修饰键本身作为主键的情况
-  if (["Control", "Alt", "Shift", "Meta"].includes(k)) return;
-
-  const keyPart = k.length === 1 ? k.toUpperCase() : k;
+  const keyPart = mainKeyFromCode(e.code);
+  if (!keyPart) return; // 无效主键：保持录制态，用户可再试
   if (parts.length === 0) return; // 必须带至少一个修饰键
   parts.push(keyPart);
   shortcuts[recordingKey.value] = parts.join("+");
@@ -617,30 +637,6 @@ async function save() {
   letter-spacing: 0.02em;
   margin: 0;
   flex: 1;
-}
-.icon-btn {
-  -webkit-app-region: no-drag;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition:
-    color var(--duration-hover) var(--ease-default),
-    background var(--duration-hover) var(--ease-default);
-}
-.icon-btn:hover {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-.icon-btn svg {
-  width: 15px;
-  height: 15px;
 }
 
 /* ---- 主体 ---- */

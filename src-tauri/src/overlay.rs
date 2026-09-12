@@ -104,19 +104,23 @@ pub fn activate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResu
         state.disarm_activation_guard();
     });
 
-    // Windows 快速路径：一次性 SetWindowPos 定位 + 置顶；失败回退 Tauri API
+    // Windows 快速路径：一次性 SetWindowPos 定位 + 置顶；失败回退 Tauri API。
+    // 光标钳制推迟到 show/set_focus 全部成功之后执行（见下）：
+    // 若在定位阶段就 ClipCursor，激活序列任一步失败（? 提前返回）会留下
+    // "光标被钳制但窗口不可见、模式仍是 Hidden"的卡死态。
     #[cfg(target_os = "windows")]
-    {
+    let clip_rect: Option<(i32, i32, u32, u32)> = {
         match window.hwnd() {
             Ok(hwnd) => match win32::get_cursor_monitor_rect() {
                 Some((x, y, w, h)) => {
                     if win32::position_window_on_monitor(hwnd.0, x, y, w, h) {
-                        win32::clip_cursor(x, y, w, h);
+                        Some((x, y, w, h))
                     } else {
                         crate::log::log(
                             "activate_drawing: position_window_on_monitor 失败，回退 Tauri API",
                         );
                         fallback_position(&window);
+                        None
                     }
                 }
                 None => {
@@ -124,6 +128,7 @@ pub fn activate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResu
                         "activate_drawing: get_cursor_monitor_rect 失败，回退 Tauri API",
                     );
                     fallback_position(&window);
+                    None
                 }
             },
             Err(e) => {
@@ -131,14 +136,21 @@ pub fn activate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResu
                     "activate_drawing: hwnd() 失败: {e}，回退 Tauri API"
                 ));
                 fallback_position(&window);
+                None
             }
         }
-    }
+    };
 
     window.set_always_on_top(true)?;
     window.set_ignore_cursor_events(false)?;
     window.show()?;
     window.set_focus()?;
+
+    // 窗口已可见且聚焦，此时钳制光标才安全（见上）
+    #[cfg(target_os = "windows")]
+    if let Some((x, y, w, h)) = clip_rect {
+        win32::clip_cursor(x, y, w, h);
+    }
 
     set_mode(state, OverlayMode::Drawing);
 
@@ -186,7 +198,7 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
         _ => deactivate_drawing(app, state),
     };
     if let Err(e) = result {
-        eprintln!("[akimark] toggle_drawing 失败: {e}");
+        crate::log::log(&format!("toggle_drawing 失败: {e}"));
     }
 }
 
@@ -234,10 +246,12 @@ pub fn exit_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> Ap
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     window.set_ignore_cursor_events(false)?;
     set_mode(state, OverlayMode::Drawing);
-    // 回到绘制模式：重新限制光标到当前显示器（穿透期间光标可能已移出）
+    // 回到绘制模式：重新限制光标到 overlay 窗口（画布）所在显示器。
+    // 不能按光标所在屏钳制：穿透期间光标可能已移到其他显示器，
+    // 钳在光标屏会把用户困在没有画布的屏上（点击无响应）。
     #[cfg(target_os = "windows")]
-    if let Ok(_hwnd) = window.hwnd() {
-        if let Some((x, y, w, h)) = win32::get_cursor_monitor_rect() {
+    if let Ok(hwnd) = window.hwnd() {
+        if let Some((x, y, w, h)) = win32::get_window_monitor_rect(hwnd.0) {
             win32::clip_cursor(x, y, w, h);
         }
     }
@@ -253,7 +267,7 @@ pub fn toggle_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) {
         _ => Ok(()),
     };
     if let Err(e) = result {
-        eprintln!("[akimark] toggle_penetration 失败: {e}");
+        crate::log::log(&format!("toggle_penetration 失败: {e}"));
     }
 }
 

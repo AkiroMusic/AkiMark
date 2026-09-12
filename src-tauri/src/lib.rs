@@ -40,13 +40,16 @@ pub fn open_settings(app: &AppHandle) {
     // 必须与 overlay 窗口的 additionalBrowserArgs 完全一致：
     // 同一 user data folder 下 WebView2 以第一个窗口的参数启动浏览器进程，
     // 后续窗口参数不同会导致 ERROR_NOT_READY (0x8007139F) 创建失败。
-    .additional_browser_args("--disable-gpu-compositing")
+    // 注意：设置 additional_browser_args 会整体覆盖 wry 默认参数，须带上
+    // 默认的 --disable-features（SmartScreen/OLE UI 等）。
+    .additional_browser_args(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing",
+    )
     .build()
     {
         Ok(w) => w,
         Err(e) => {
             crate::log::log(&format!("open_settings: 创建设置窗口失败: {e}"));
-            eprintln!("[akimark] 创建设置窗口失败: {e}");
             return;
         }
     };
@@ -133,7 +136,6 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     // 无默认图标时跳过托盘创建（托盘是增强功能，不应阻塞启动）
     let Some(icon) = app.default_window_icon() else {
         crate::log::log("setup_tray: 无默认窗口图标，跳过托盘创建");
-        eprintln!("[akimark] 无默认窗口图标，跳过托盘创建");
         return Ok(());
     };
 

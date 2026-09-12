@@ -98,7 +98,22 @@ pub fn load_config(app: &tauri::AppHandle) -> AppConfig {
             Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    eprintln!("[akimark] config.json 解析失败，使用默认值: {e}");
+                    // 配置损坏：先把原文件改名留证（.bak），再回退默认值。
+                    // 否则下次 save_config 会直接用默认配置覆盖，用户再无找回机会。
+                    let bak = path.with_extension("json.bak");
+                    match std::fs::rename(&path, &bak) {
+                        Ok(()) => {
+                            eprintln!(
+                                "[akimark] config.json 解析失败，已备份到 {} 并回退默认值: {e}",
+                                bak.display()
+                            );
+                        }
+                        Err(re) => {
+                            eprintln!(
+                                "[akimark] config.json 解析失败且回退默认值（备份失败: {re}）: {e}"
+                            );
+                        }
+                    }
                     AppConfig::default()
                 }
             },
@@ -120,8 +135,10 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> AppResult<()> 
         std::fs::create_dir_all(dir)?;
     }
     let content = serde_json::to_string_pretty(config)?;
-    // 原子写入：先写临时文件再 rename，避免写入中途崩溃损坏配置
-    let tmp = path.with_extension("json.tmp");
+    // 原子写入：先写临时文件再 rename，避免写入中途崩溃损坏配置。
+    // 临时名带进程 id：两个窗口并发保存时共用一个固定 tmp 名会互相覆盖
+    //（A 写 tmp → B 覆写 tmp → A rename 成功 → B rename 找不到 tmp）。
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())

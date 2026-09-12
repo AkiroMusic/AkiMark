@@ -1,7 +1,8 @@
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ClipCursor, GetCursorPos, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
@@ -10,6 +11,20 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 /// 光标所在显示器的物理像素矩形 (x, y, w, h)
 pub fn get_cursor_monitor_rect() -> Option<(i32, i32, u32, u32)> {
     get_monitor_rect(get_cursor_monitor()?)
+}
+
+/// 指定 HWND 窗口所在显示器的物理像素矩形 (x, y, w, h)。
+///
+/// 与 get_cursor_monitor_rect 的区别：穿透模式下光标可能已移到其他显示器，
+/// 退出穿透重新钳制光标时必须按窗口（画布）所在屏，而不是光标所在屏。
+pub fn get_window_monitor_rect(hwnd: *mut c_void) -> Option<(i32, i32, u32, u32)> {
+    unsafe {
+        let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if hmon.is_null() {
+            return None;
+        }
+        get_monitor_rect(hmon)
+    }
 }
 
 /// 光标所在显示器句柄（HMONITOR）

@@ -78,7 +78,7 @@ fn register_one(
         return true; // 空 = 未绑定，不算冲突
     }
     let Ok(shortcut) = accel.parse::<Shortcut>() else {
-        eprintln!("[akimark] 无效快捷键: {accel}");
+        crate::log::log(&format!("register_shortcuts: 无效快捷键: {accel}"));
         return false;
     };
 
@@ -93,7 +93,9 @@ fn register_one(
     match result {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("[akimark] 注册快捷键 {accel} 失败（可能被其他程序占用）: {e}");
+            crate::log::log(&format!(
+                "register_shortcuts: 注册快捷键 {accel} 失败（可能被其他程序占用）: {e}"
+            ));
             false
         }
     }
@@ -169,6 +171,7 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
     });
 
     // 冲突项回滚到旧值；旧值重新注册也失败时，加入冲突并清空配置
+    //（新旧相同的分支不再重复 push：新值失败时已入列表，old == new）
     if !ok_drawing {
         conflicts.push(shortcuts.toggle_drawing.clone());
         let old = &old_shortcuts.toggle_drawing;
@@ -180,7 +183,6 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
             }
         } else {
             // 新旧相同但注册失败（外部占用）：清空配置
-            conflicts.push(old.clone());
             new_config.shortcuts.toggle_drawing = String::new();
         }
     }
@@ -195,7 +197,6 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
                 new_config.shortcuts.clear_drawing = String::new();
             }
         } else {
-            conflicts.push(old.clone());
             new_config.shortcuts.clear_drawing = String::new();
         }
     }
@@ -210,7 +211,6 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
                 new_config.shortcuts.toggle_penetration = String::new();
             }
         } else {
-            conflicts.push(old.clone());
             new_config.shortcuts.toggle_penetration = String::new();
         }
     }

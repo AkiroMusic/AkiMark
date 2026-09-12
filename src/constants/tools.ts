@@ -6,8 +6,6 @@ export interface ToolDef {
   label: string;
   /** 快捷键数字键 */
   hotkey: string;
-  /** 是否透明笔触（荧光笔） */
-  translucent?: boolean;
 }
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -17,7 +15,6 @@ export const TOOL_DEFS: ToolDef[] = [
     id: "highlighter",
     label: "tool.highlighter",
     hotkey: "3",
-    translucent: true,
   },
   { id: "eraser", label: "tool.eraser", hotkey: "4" },
   { id: "line", label: "tool.line", hotkey: "5" },

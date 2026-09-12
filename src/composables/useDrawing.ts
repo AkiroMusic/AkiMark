@@ -412,7 +412,10 @@ export function useDrawing(
   ) {
     const src = blurComposite ?? blurBase;
     if (!src || action.points.length === 0) return;
-    const cell = blurCell.value;
+    // 块尺寸按动作自身线宽计算（与绘制时刻的 blurCell 公式一致），
+    // 不读当前工具线宽：否则切换工具后的全量重绘（undo/渐隐 tick/resize）
+    // 会把已有马赛克重画成新颗粒度，与用户所见不一致
+    const cell = Math.max(BLUR_CELL_MIN, Math.round(action.lineWidth * 0.8));
     // 合成底图按 overlay 分辨率（dpr）存储；目标 ctx 变换可能不同（导出 scale）。
     // 源区坐标必须按合成底图的实际分辨率换算，否则高 DPI 导出（scale ≠ dpr）时采样错位。
     const srcScale = dpr;
@@ -500,16 +503,18 @@ export function useDrawing(
         );
         break;
       case "fading":
-        // 渐隐笔：先以略宽的白色打底（外层白边更醒目），再叠彩色笔迹；
-        // 几何/透明度与钢笔一致，渐隐只影响透明度，不影响线宽/形状
-        drawPressureSegment(
+        // 渐隐笔：透明度随时间衰减到 1 以下，不能沿用钢笔的逐段 stroke——
+        // 相邻段圆帽重叠区会被 alpha 合成两次，形成"串珠"伪影。
+        // 改用单路径整体 stroke（中点贝塞尔平滑），宽度取基准线宽：
+        // 鼠标本就无压力调制（渲染结果不变），数位板放弃逐段调宽换取无伪影。
+        drawSmoothSegment(
           ctx,
           action.points,
           "#ffffff",
           action.lineWidth + 3,
           actionOpacity(action),
         );
-        drawPressureSegment(
+        drawSmoothSegment(
           ctx,
           action.points,
           action.color,
