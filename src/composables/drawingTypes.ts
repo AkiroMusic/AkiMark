@@ -9,7 +9,8 @@ export type Tool =
   | "arrow"
   | "text"
   | "fading"
-  | "blur";
+  | "blur"
+  | "counter";
 
 /** 点（pressure 用于数位板压感，鼠标恒为 0.5） */
 export interface Point {
@@ -31,6 +32,8 @@ export interface DrawAction {
   fontSize?: number;
   /** fading 渐隐笔专用：笔画诞生时刻（ms 时间戳），用于计算剩余透明度 */
   bornAt?: number;
+  /** rect/circle 形状专用：Shift 拖拽 = 填充（默认仅描边） */
+  filled?: boolean;
 }
 
 /** 线宽分组 */

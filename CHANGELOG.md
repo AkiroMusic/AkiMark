@@ -5,6 +5,62 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-13
+
+Stability/performance pass and the first batch of community-style feature gaps.
+
+### Added
+
+- **Copy annotation to clipboard** — `Ctrl+C` or a toolbar button composites
+  annotations onto the screen and puts a PNG on the clipboard (via
+  `tauri-plugin-clipboard-manager`; decoding and ACL stay in Rust).
+- **Step-counter tool** — click to place auto-incrementing numbered badges
+  (number recalculates after undo/clear); toolbar entry, no digit hotkey
+  (0–9 are all taken).
+- **Custom colors + recent colors** — a "+" swatch opens the native color
+  picker; the last 4 custom colors persist alongside drawing prefs.
+- **Shape fill** — hold `Shift` while drawing a rectangle/circle to fill it.
+- **Settings: language switcher and "keep drawings on exit" switch** — the
+  locale and preserveDrawings config values finally have UI controls.
+- **Toolbar drag & narrow-screen wrap** — drag the toolbar by its padding,
+  position remembered locally; buttons wrap below ~1000px viewports.
+- **Visible failure feedback** — a persistent banner when overlay
+  initialization fails, toasts for mosaic base ready / penetration toggle
+  failure, and export-folder picker errors now surface in the UI.
+
+### Performance
+
+- **Fading pen has its own canvas layer** — the 250 ms fade tick now repaints
+  only fading strokes instead of replaying the entire history (including
+  mosaic re-sampling up to 5000 drawImage calls per stroke).
+- **Eraser drag is incremental** — a per-stroke snapshot of the history layer
+  replaces the per-frame full-history replay; snapshot invalidates on
+  undo/resize and falls back to the full path.
+- **Memory**: the zoom background now uses a Blob URL (revoked on exit)
+  instead of a persistent base64 data URL; the export canvas scale is clamped
+  like the on-screen canvases.
+
+### Changed
+
+- **`Ctrl+D` clears the screen** (was `Ctrl+C`, which now copies) — resolves
+  the conflict with the system-wide "copy" reflex.
+- **Canvas pixel clamp fixed** — `MAX_CANVAS_PIXELS` (6M → 9M) is no longer
+  defeated by `Math.max(1, dpr)`: normal screens keep full resolution, 8K+
+  setups downsample the backing bitmap instead of risking OOM.
+
+### Fixed
+
+- `renderTo` restores the mosaic base even when export rendering throws.
+- README: version refreshed, `theme` dead config removed from examples,
+  Esc step-out description now includes the spotlight layer, undo-stack
+  wording corrected.
+
+### Removed
+
+- **`theme` config field** — it never had an implementation (single dark
+  theme); the field is dropped from config structs and docs (old config.json
+  files load fine; the unknown key is ignored).
+
 ## [0.2.1] - 2026-09-13
 
 Zero-defect audit: correctness fixes found by a full code review, plus
@@ -202,6 +258,7 @@ annotation tool built with Tauri v2 + Vue 3.
 - CI pipeline (runs frontend checks and Windows backend build) and Node-20
   action deprecations.
 
+[0.2.2]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AkiroMusic/AkiMark/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AkiroMusic/AkiMark/releases/tag/v0.1.0

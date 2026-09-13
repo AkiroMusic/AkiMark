@@ -14,7 +14,6 @@ export interface Shortcuts {
 
 export interface GeneralConfig {
   locale: string;
-  theme: string;
   preserveDrawings: boolean;
   lineWidths: LineWidthsConfig;
   defaultTool:
@@ -27,10 +26,13 @@ export interface GeneralConfig {
     | "arrow"
     | "text"
     | "fading"
-    | "blur";
+    | "blur"
+    | "counter";
   defaultColor: string;
   /** 默认板书底色（白板 / 黑板） */
   boardDefault: "white" | "black";
+  /** 最近使用的自定义颜色（工具栏取色器加入，最多 4 个） */
+  recentColors: string[];
   openSettingsOnStartup: boolean;
   exportDir: string | null;
 }

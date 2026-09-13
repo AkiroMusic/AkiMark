@@ -47,7 +47,6 @@ impl Default for Shortcuts {
 #[serde(rename_all = "camelCase", default)]
 pub struct GeneralConfig {
     pub locale: String,
-    pub theme: String,
     pub preserve_drawings: bool,
     pub line_widths: LineWidthsConfig,
     /// 默认画笔工具（pen / highlighter / eraser / …）
@@ -56,6 +55,8 @@ pub struct GeneralConfig {
     pub default_color: String,
     /// 默认板书底色（white / black，对应白板 / 黑板模式）
     pub board_default: String,
+    /// 最近使用的自定义颜色（工具栏取色器加入，最多 4 个，hex）
+    pub recent_colors: Vec<String>,
     /// 是否在启动时打开设置窗口（托盘常驻，设置用完即毁）
     pub open_settings_on_startup: bool,
     /// 导出目录；None = 桌面
@@ -66,12 +67,12 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             locale: "zh-CN".into(),
-            theme: "dark".into(),
             preserve_drawings: false,
             line_widths: LineWidthsConfig::default(),
             default_tool: "pen".into(),
             default_color: "#6C8CFF".into(),
             board_default: "white".into(),
+            recent_colors: Vec::new(),
             open_settings_on_startup: true,
             export_dir: None,
         }

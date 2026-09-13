@@ -7,9 +7,9 @@ describe("TOOL_DEFS 工具顺序契约", () => {
     expect(TOOL_DEFS[1].id).toBe("fading");
   });
 
-  it("包含全部 10 个工具 id", () => {
+  it("包含全部 11 个工具 id", () => {
     const ids = TOOL_DEFS.map((def) => def.id);
-    expect(ids).toHaveLength(10);
+    expect(ids).toHaveLength(11);
     expect(new Set(ids)).toEqual(
       new Set([
         "pen",
@@ -22,16 +22,18 @@ describe("TOOL_DEFS 工具顺序契约", () => {
         "arrow",
         "text",
         "blur",
+        "counter",
       ]),
     );
   });
 
-  it("快捷键唯一，且恰为 1-9、0", () => {
-    const hotkeys = TOOL_DEFS.map((def) => def.hotkey);
-    expect(new Set(hotkeys).size).toBe(hotkeys.length);
-    expect(new Set(hotkeys)).toEqual(
+  it("数字热键唯一，且恰为 1-9、0；序号工具无数字热键（仅工具栏入口）", () => {
+    const digitHotkeys = TOOL_DEFS.map((def) => def.hotkey).filter(Boolean);
+    expect(new Set(digitHotkeys).size).toBe(digitHotkeys.length);
+    expect(new Set(digitHotkeys)).toEqual(
       new Set(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]),
     );
+    expect(TOOL_DEFS.find((def) => def.id === "counter")?.hotkey).toBe("");
   });
 });
 

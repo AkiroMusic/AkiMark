@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref } from "vue";
 import { TOOL_DEFS, TOOL_WIDTH_GROUP, WIDTH_MAX } from "../constants/tools";
 import { COLOR_PALETTE } from "../constants/colors";
 import { useI18n } from "../i18n";
@@ -17,19 +18,26 @@ const props = defineProps<{
   spotlight: boolean;
   board: "none" | "white" | "black";
   zoom: boolean;
+  /** 最近使用的自定义颜色（取色器加入） */
+  recentColors: string[];
+  /** 上次记住的工具栏位置（localStorage）；null = 默认顶部居中 */
+  initialPosition: { x: number; y: number } | null;
 }>();
 
 const emit = defineEmits<{
   selectTool: [tool: Tool];
   selectColor: [color: string];
+  customColor: [color: string];
   updateWidth: [
     width: { stroke?: number; highlighter?: number; eraser?: number },
   ];
+  toolbarMoved: [pos: { x: number; y: number }];
   undo: [];
   redo: [];
   clear: [];
   penetrate: [];
   export: [];
+  copy: [];
   toggleSpotlight: [];
   toggleBoard: [];
   toggleZoom: [];
@@ -61,6 +69,9 @@ function toolIcon(tool: Tool) {
     case "blur":
       // 马赛克：四宫格小方块
       return "M4 4 H8 V8 H4 Z M12 4 H16 V8 H12 Z M4 12 H8 V16 H4 Z M12 12 H16 V16 H12 Z";
+    case "counter":
+      // 序号：圆徽章（模板内叠加数字 1）
+      return "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3";
   }
 }
 
@@ -82,19 +93,72 @@ function changeWidth(delta: number) {
   emit("updateWidth", { [key]: next });
 }
 
-/** 工具栏内任意按钮点击后失焦：避免按钮持焦时 Space 被按钮原生激活抢占，导致空格键无法切换工具栏 */
-function onToolbarClick(e: MouseEvent) {
-  const target = e.target as HTMLElement | null;
-  const btn = target?.closest("button");
-  if (btn) btn.blur();
+// ---- 自定义颜色 ----
+const colorPicker = ref<HTMLInputElement | null>(null);
+function openPicker() {
+  colorPicker.value?.click();
 }
+function onPickColor(e: Event) {
+  const value = (e.target as HTMLInputElement).value;
+  emit("selectColor", value);
+  emit("customColor", value);
+}
+
+// ---- 工具栏拖动（位置记忆由父组件经 localStorage 持久化）----
+const rootEl = ref<HTMLElement | null>(null);
+const pos = ref<{ x: number; y: number } | null>(
+  props.initialPosition ? { ...props.initialPosition } : null,
+);
+let dragOrigin: { x: number; y: number; px: number; py: number } | null = null;
+
+function onDragStart(e: PointerEvent) {
+  // 只允许从工具栏空白区拖动；按钮/色块/输入框照常工作
+  const target = e.target as HTMLElement | null;
+  if (target?.closest("button, input")) return;
+  const rect = rootEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  dragOrigin = { x: e.clientX, y: e.clientY, px: rect.left, py: rect.top };
+  rootEl.value?.setPointerCapture(e.pointerId);
+}
+function onDragMove(e: PointerEvent) {
+  if (!dragOrigin || !rootEl.value) return;
+  const rect = rootEl.value.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width;
+  const maxY = window.innerHeight - rect.height;
+  const x = Math.min(
+    maxX,
+    Math.max(0, dragOrigin.px + e.clientX - dragOrigin.x),
+  );
+  const y = Math.min(
+    maxY,
+    Math.max(0, dragOrigin.py + e.clientY - dragOrigin.y),
+  );
+  pos.value = { x, y };
+}
+function onDragEnd() {
+  if (!dragOrigin) return;
+  dragOrigin = null;
+  if (pos.value) emit("toolbarMoved", { ...pos.value });
+}
+onBeforeUnmount(() => {
+  dragOrigin = null;
+});
 </script>
 
 <template>
   <div
+    ref="rootEl"
     class="toolbar double-bezel"
     data-toolbar
-    @click.capture="onToolbarClick"
+    :style="
+      pos
+        ? { left: `${pos.x}px`, top: `${pos.y}px`, transform: 'none' }
+        : undefined
+    "
+    @pointerdown="onDragStart"
+    @pointermove="onDragMove"
+    @pointerup="onDragEnd"
+    @pointercancel="onDragEnd"
   >
     <!-- 工具组 -->
     <div class="toolbar-group" role="toolbar">
@@ -103,7 +167,7 @@ function onToolbarClick(e: MouseEvent) {
         :key="def.id"
         class="tool-btn"
         :class="{ active: isActiveTool(def.id) }"
-        :title="`${t(def.label)} (${def.hotkey})`"
+        :title="def.hotkey ? `${t(def.label)} (${def.hotkey})` : t(def.label)"
         @click="emit('selectTool', def.id)"
       >
         <svg
@@ -115,11 +179,23 @@ function onToolbarClick(e: MouseEvent) {
           stroke-linejoin="round"
         >
           <path :d="toolIcon(def.id)" />
+          <text
+            v-if="def.id === 'counter'"
+            x="12"
+            y="16.2"
+            text-anchor="middle"
+            font-size="11"
+            font-weight="700"
+            fill="currentColor"
+            stroke="none"
+          >
+            1
+          </text>
         </svg>
       </button>
     </div>
 
-    <!-- 颜色组 -->
+    <!-- 颜色组：固定色盘 + 最近自定义色 + 取色器入口 -->
     <div class="toolbar-group color-group">
       <button
         v-for="c in COLOR_PALETTE"
@@ -129,6 +205,28 @@ function onToolbarClick(e: MouseEvent) {
         :style="{ background: c }"
         :title="c"
         @click="emit('selectColor', c)"
+      />
+      <button
+        v-for="c in recentColors"
+        :key="`r-${c}`"
+        class="swatch recent"
+        :class="{ active: c === color }"
+        :style="{ background: c }"
+        :title="`${t('action.recentColor')} ${c}`"
+        @click="emit('selectColor', c)"
+      />
+      <button
+        class="swatch add-swatch"
+        :title="t('action.customColor')"
+        @click="openPicker"
+      >
+        +
+      </button>
+      <input
+        ref="colorPicker"
+        type="color"
+        class="color-picker"
+        @input="onPickColor"
       />
     </div>
 
@@ -218,6 +316,21 @@ function onToolbarClick(e: MouseEvent) {
         >
           <path d="M21 15 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V15" />
           <path d="M7 8 L12 3 L17 8 M12 3 V15" />
+        </svg>
+      </button>
+      <button class="mini-btn" :title="t('action.copy')" @click="emit('copy')">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="9" y="9" width="12" height="12" rx="2" />
+          <path
+            d="M5 15 H4 A2 2 0 0 1 2 13 V4 A2 2 0 0 1 4 2 H13 A2 2 0 0 1 15 4 V5"
+          />
         </svg>
       </button>
       <button
@@ -328,6 +441,19 @@ function onToolbarClick(e: MouseEvent) {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  /* 窄屏/竖屏兜底：允许换行且不溢出视口 */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100vw - 16px);
+  cursor: grab;
+}
+.toolbar:active {
+  cursor: grabbing;
+}
+/* 交互元素上恢复常规光标 */
+.toolbar button,
+.toolbar input {
+  cursor: pointer;
 }
 
 /* 毛玻璃 + 双镶边来自 .double-bezel，这里补内部布局 */
@@ -402,6 +528,36 @@ function onToolbarClick(e: MouseEvent) {
   border-color: var(--text-primary);
   box-shadow: 0 0 0 2px var(--accent);
   transform: scale(1.15);
+}
+/* 最近自定义色：小圆点标记区分 */
+.swatch.recent {
+  width: 16px;
+  height: 16px;
+  border-style: dashed;
+}
+/* 取色器入口：虚线空心圆 + 加号 */
+.swatch.add-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1.5px dashed rgba(255, 255, 255, 0.35);
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+.swatch.add-swatch:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+/* 隐藏的原生取色输入框（由 + 按钮触发） */
+.color-picker {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* 线宽 */

@@ -18,6 +18,8 @@ function createMockCtx() {
     stroke: vi.fn(() => calls.push("stroke")),
     fill: vi.fn(() => calls.push("fill")),
     strokeRect: vi.fn(() => calls.push("strokeRect")),
+    fillRect: vi.fn(() => calls.push("fillRect")),
+    arc: vi.fn(() => calls.push("arc")),
     ellipse: vi.fn(() => calls.push("ellipse")),
     fillText: vi.fn(() => calls.push("fillText")),
     drawImage: vi.fn(() => calls.push("drawImage")),
@@ -36,6 +38,7 @@ function createMockCtx() {
     set imageSmoothingEnabled(_v: boolean) {},
     set font(_v: string) {},
     set textBaseline(_v: string) {},
+    set textAlign(_v: string) {},
     canvas: { width: 0, height: 0 },
   };
   return {
@@ -56,12 +59,13 @@ function fakeCanvas(ctx: CanvasRenderingContext2D): HTMLCanvasElement {
   } as unknown as HTMLCanvasElement;
 }
 
-/** 构造指针事件（clientX/Y + pressure + pointerType） */
+/** 构造指针事件（clientX/Y + pressure + pointerType + shift 修饰键） */
 function pointer(
   x: number,
   y: number,
   pressure = 0.5,
   pointerType: string = "mouse",
+  shiftKey = false,
 ): PointerEvent {
   return {
     clientX: x,
@@ -69,6 +73,7 @@ function pointer(
     button: 0,
     pressure,
     pointerType,
+    shiftKey,
   } as PointerEvent;
 }
 
@@ -454,5 +459,70 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     expect(drawCalls[0][3]).toBe(cell * 3);
     // 目标块尺寸 = cell（若误读当前工具线宽 3，此处会变成 3×3 的细颗粒）
     expect(drawCalls[0][7]).toBe(cell);
+  });
+});
+
+describe("useDrawing 序号工具 / 形状填充", () => {
+  /** 读取 mock ctx 上 fillText 的第一参数（序号工具渲染的数字）。
+   * 注意：每次重绘都会重放历史，调用是累积的，断言只看最后一个序号 */
+  function fillTextArgs(ctx: { fillText: unknown }) {
+    const mock = ctx.fillText as unknown as ReturnType<typeof vi.fn>;
+    return mock.mock.calls.map((c: unknown[]) => c[0] as string);
+  }
+
+  it("F5: 序号工具点击自动递增（1、2、3）", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.currentTool.value = "counter";
+    for (const [x, y] of [
+      [10, 10],
+      [60, 10],
+      [110, 10],
+    ]) {
+      drawing.startDraw(pointer(x, y));
+      drawing.endDraw();
+      flushRaf();
+    }
+    // 最后一次重绘重放全部历史：最后三个调用应为 1、2、3
+    const args = fillTextArgs(historyCtx.ctx);
+    expect(args.slice(-3)).toEqual(["1", "2", "3"]);
+  });
+
+  it("F5: 撤销最后一个序号后，下一个编号按剩余最大值重算", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.currentTool.value = "counter";
+    for (const [x, y] of [
+      [10, 10],
+      [60, 10],
+    ]) {
+      drawing.startDraw(pointer(x, y));
+      drawing.endDraw();
+    }
+    drawing.undo();
+    flushRaf();
+    drawing.startDraw(pointer(110, 10));
+    drawing.endDraw();
+    flushRaf();
+    // 撤销后重绘不含被撤销的 "2"，新序号仍是 "2"（max(1)+1）
+    const args = fillTextArgs(historyCtx.ctx);
+    expect(args[args.length - 1]).toBe("2");
+  });
+
+  it("F6: rect + Shift 拖拽 = 填充（fillRect 被调用），无 Shift 仅描边", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.currentTool.value = "rect";
+    drawing.startDraw(pointer(10, 10, 0.5, "mouse", true));
+    drawing.drawTo(pointer(80, 60));
+    drawing.endDraw();
+    flushRaf();
+    expect(historyCtx.calls).toContain("fillRect");
+
+    const { drawing: d2, historyCtx: h2 } = setup();
+    d2.currentTool.value = "rect";
+    d2.startDraw(pointer(10, 10));
+    d2.drawTo(pointer(80, 60));
+    d2.endDraw();
+    flushRaf();
+    expect(h2.calls).not.toContain("fillRect");
+    expect(h2.calls).toContain("strokeRect");
   });
 });

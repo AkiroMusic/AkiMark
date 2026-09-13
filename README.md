@@ -14,7 +14,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 - ⚡ **Instant activation** — Pre-built hidden overlay window; a single global hotkey shows it in milliseconds.
 - 🪟 **Full-screen drawing overlay** — Transparent, always-on-top, skips taskbar.
-- 🖌️ **Ten tools** — Pen, highlighter, eraser, line, rectangle, circle, arrow, text, fading pen, blur.
+- 🖌️ **Eleven tools** — Pen, highlighter, eraser, line, rectangle, circle, arrow, text, fading pen, blur, step counter.
 - 🎨 **8-color palette** — Quick color cycling with Q/E.
 - 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
 - ⏳ **Fading pen** — Strokes dissolve automatically ~3s after being drawn (press `2`); perfect for transient emphasis.
@@ -22,7 +22,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`; scroll adjusts radius).
 - 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board for free-hand lecturing (press `B`; export skips the screen capture).
 - 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `M` / `Z`; scroll to change the level).
-- 📸 **Export screenshot** — Composite annotations onto the underlying screen and save as PNG (press `S` or the toolbar button; custom export folder).
+- 📸 **Export & copy** — Composite annotations onto the underlying screen, save as PNG (`S` or toolbar button; custom export folder), or copy to clipboard (`Ctrl+C`).
+- 🔢 **Step counter** — Click to place auto-incrementing numbered badges (toolbar entry).
 - ↩️ **Undo / Redo / Clear** — History stack (expired fading strokes are purged from it).
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
@@ -62,6 +63,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | `M` / `Z` | Toggle screen zoom (click to focus at cursor, scroll changes 2x / 4x / 6x / 8x) |
 | `B` | Cycle board mode (off → whiteboard → blackboard) |
 | `S` | Export screenshot as PNG |
+| `Ctrl+C` | Copy annotation to clipboard |
+| `Ctrl+D` | Clear all annotations |
 | `Space` | Toggle toolbar |
 | `X` | Toggle click-through |
 | `Ctrl+C` | Clear |
@@ -207,7 +210,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 - ⚡ **即时激活** — 预建隐藏覆盖窗口，按一次全局热键即可毫秒级显示。
 - 🪟 **全屏绘制覆盖层** — 透明、置顶、不占任务栏。
-- 🖌️ **十种工具** — 画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字、渐隐笔、马赛克笔。
+- 🖌️ **11 种工具** — 画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字、渐隐笔、马赛克笔、序号标注。
 - 🎨 **8 色调色板** — 用 Q/E 快速循环切换颜色。
 - 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
 - ⏳ **渐隐笔** — 笔画绘制约 3 秒后自动溶解消失（按 `2`）；适合临时强调。
@@ -215,12 +218,13 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`；滚轮调节半径）。
 - 🧑‍🏫 **白板 / 黑板模式** — 一键切换纯白 / 纯黑板书底，自由板书（按 `B`；导出时跳过截屏）。
 - 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `M` / `Z`；滚轮调整倍率）。
-- 📸 **导出截图** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录）。
+- 📸 **导出与复制** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录），或一键复制到剪贴板（`Ctrl+C`）。
+- 🔢 **序号标注** — 点击放置自动递增的序号徽章（工具栏入口）。
 - ↩️ **撤销 / 重做 / 清屏** — 历史操作栈（渐隐笔画过期后会自动出栈）。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
 - 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
-- ⚙️ **设置窗口** — 配置全局快捷键、开机自启、默认工具 / 颜色 / 线宽、导出目录。
+- ⚙️ **设置窗口** — 配置全局快捷键、开机自启、界面语言、退出保留笔迹、默认工具 / 颜色 / 线宽、导出目录。
 - 📁 **自定义导出目录** — 可自由选择截图导出的保存位置（默认桌面）。
 - 🚦 **快捷键占用检测** — 保存被其他程序占用的快捷键时，内联提示冲突并保留原绑定。
 - ✏️ **笔尖光标** — 45° 倾斜的笔尖光标，更接近真实书写的手感。
@@ -255,6 +259,8 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | `M` / `Z` | 开关屏幕缩放（点击以光标处聚焦，滚轮切换 2x / 4x / 6x / 8x） |
 | `B` | 循环黑板模式（关 → 白板 → 黑板） |
 | `S` | 导出截图 PNG |
+| `Ctrl+C` | 复制标注到剪贴板 |
+| `Ctrl+D` | 清空标注 |
 | `Space` | 显示 / 隐藏工具栏 |
 | `X` | 切换穿透 |
 | `Ctrl+C` | 清屏 |
