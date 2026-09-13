@@ -5,6 +5,14 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-09-13
+
+### Changed
+
+- **New app icon** — replaced the full generated icon set (ICO/PNG/Windows
+  Store logos, transparent background) from a new source artwork; also updates
+  the README logo and the tray/installer icons via the standard build pipeline.
+
 ## [0.2.4] - 2026-09-13
 
 Three user-reported fixes plus WebView2 disk-usage housekeeping.
@@ -324,6 +332,7 @@ annotation tool built with Tauri v2 + Vue 3.
 - CI pipeline (runs frontend checks and Windows backend build) and Node-20
   action deprecations.
 
+[0.2.5]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.1...v0.2.2
