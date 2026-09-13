@@ -213,11 +213,22 @@ pub fn save_general(
     mut general: GeneralConfig,
 ) -> AppResult<()> {
     validate_general(&mut general)?;
-    let mut config = state.config.lock().unwrap_or_else(|e| e.into_inner());
-    config.general = general;
-    let config_snapshot = config.clone();
-    drop(config);
+    let locale_changed = {
+        let mut config = state.config.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = config.general.locale != general.locale;
+        config.general = general;
+        changed
+    };
+    let config_snapshot = state
+        .config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     config::save_config(&app, &config_snapshot)?;
+    // 语言变更 → 后端面向用户的文案（错误消息/托盘菜单）同步切换
+    if locale_changed {
+        crate::update_ui_locale(&app, &config_snapshot.general.locale);
+    }
     config::broadcast_config(&app, &config_snapshot);
     Ok(())
 }

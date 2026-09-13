@@ -27,7 +27,8 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - ↩️ **Undo / Redo / Clear** — History stack (expired fading strokes are purged from it).
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
-- 🪟 **System tray resident** — Zero-drama background presence; single-instance guard.
+- 🪟 **System tray resident** — Zero-drama background presence; single-instance guard
+  (launching a second instance just opens the settings window).
 - ⚙️ **Settings window** — Configure global shortcuts, launch-at-startup, default tool/color/line width, export folder.
 - 📁 **Custom export folder** — Choose where exported PNG screenshots go (defaults to Desktop).
 - 🚦 **Shortcut conflict detection** — Saving a hotkey already taken by another app shows an inline warning and keeps the previous binding.
@@ -223,7 +224,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - ↩️ **撤销 / 重做 / 清屏** — 历史操作栈（渐隐笔画过期后会自动出栈）。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
-- 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
+- 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护（再次启动只会打开设置窗口）。
 - ⚙️ **设置窗口** — 配置全局快捷键、开机自启、界面语言、退出保留笔迹、默认工具 / 颜色 / 线宽、导出目录。
 - 📁 **自定义导出目录** — 可自由选择截图导出的保存位置（默认桌面）。
 - 🚦 **快捷键占用检测** — 保存被其他程序占用的快捷键时，内联提示冲突并保留原绑定。
