@@ -1,4 +1,19 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
+
+/// 面向前端的错误文案语言：true = 英文，false = 中文（日志/Display 恒中文）。
+/// 启动时按 config.general.locale 设置，save_general 成功后同步更新。
+static ERROR_LOCALE_EN: AtomicBool = AtomicBool::new(false);
+
+/// 设置面向前端的错误文案语言（config.general.locale → en/zh-CN）
+pub fn set_error_locale(locale: &str) {
+    let en = locale.eq_ignore_ascii_case("en");
+    ERROR_LOCALE_EN.store(en, Ordering::SeqCst);
+}
+
+fn error_locale_en() -> bool {
+    ERROR_LOCALE_EN.load(Ordering::SeqCst)
+}
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -41,6 +56,34 @@ pub enum AppError {
     Clipboard(String),
 }
 
+/// 面向前端的双语文案（Display 恒中文供日志；Serialize 按当前 locale 输出）
+impl AppError {
+    fn localized(&self) -> String {
+        if !error_locale_en() {
+            return self.to_string();
+        }
+        match self {
+            AppError::Io(e) => format!("I/O error: {e}"),
+            AppError::Serde(e) => format!("Data error: {e}"),
+            AppError::Tauri(e) => format!("App error: {e}"),
+            AppError::WindowNotFound(w) => format!("Window not found: {w}"),
+            AppError::InvalidShortcut(s) => format!("Invalid shortcut: {s}"),
+            AppError::Shortcut(e) => format!("Shortcut error: {e}"),
+            AppError::Autostart(e) => format!("Autostart error: {e}"),
+            AppError::CaptureFailed => "Screen capture failed".into(),
+            AppError::UnsupportedPlatform => {
+                "This feature is not supported on this platform".into()
+            }
+            AppError::InvalidExportData => "Invalid export data".into(),
+            AppError::ExportTooLarge(n) => format!("Export data too large (limit {n} bytes)"),
+            AppError::InvalidExportDir(d) => format!("Invalid export folder: {d}"),
+            AppError::InvalidTool(t) => format!("Invalid tool: {t}"),
+            AppError::DuplicateShortcut(s) => format!("Duplicate shortcut: {s}"),
+            AppError::Clipboard(e) => format!("Failed to write to clipboard: {e}"),
+        }
+    }
+}
+
 pub type AppResult<T> = Result<T, AppError>;
 
 impl serde::Serialize for AppError {
@@ -48,6 +91,30 @@ impl serde::Serialize for AppError {
     where
         S: serde::ser::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        serializer.serialize_str(&self.localized())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localized_switches_with_locale() {
+        let err = AppError::CaptureFailed;
+        assert_eq!(err.to_string(), "截图失败");
+        set_error_locale("en");
+        assert_eq!(err.localized(), "Screen capture failed");
+        set_error_locale("zh-CN");
+        assert_eq!(err.localized(), "截图失败");
+    }
+
+    #[test]
+    fn dynamic_variants_localize() {
+        let err = AppError::InvalidTool("bogus".into());
+        set_error_locale("en");
+        assert_eq!(err.localized(), "Invalid tool: bogus");
+        set_error_locale("zh-CN");
+        assert_eq!(err.localized(), "无效的工具: bogus");
     }
 }

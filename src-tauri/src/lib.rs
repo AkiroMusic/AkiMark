@@ -19,6 +19,50 @@ use crate::overlay::AppState;
 /// 设置窗口 label（与 tauri.conf.json 一致）
 pub const SETTINGS_LABEL: &str = "settings";
 
+/// 面向用户的文案（托盘菜单 / 设置窗口标题），随 config.general.locale
+fn tray_labels(
+    locale: &str,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    if locale.eq_ignore_ascii_case("en") {
+        (
+            "AkiMark Settings",
+            "Annotate / Exit",
+            "Settings",
+            "Clear screen",
+            "Quit",
+        )
+    } else {
+        ("AkiMark 设置", "标注 / 退出标注", "设置", "清屏", "退出")
+    }
+}
+
+/// 当前配置语言（供 UI 文案使用）
+pub fn current_locale() -> String {
+    APP_LOCALE
+        .read()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| "zh-CN".into())
+}
+
+/// 全局 UI locale（启动时设置；save_general 成功后更新，随之重建托盘菜单）
+static APP_LOCALE: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// 更新全局 UI locale（含面向前端的错误文案语言）。
+/// 设置窗口保存语言后调用；托盘菜单随 rebuild_tray_menu 重建。
+pub fn update_ui_locale(app: &AppHandle, locale: &str) {
+    if let Ok(mut s) = APP_LOCALE.write() {
+        *s = locale.to_string();
+    }
+    crate::error::set_error_locale(locale);
+    rebuild_tray_menu(app);
+}
+
 /// 打开设置窗口：已存在则聚焦，否则创建（用后即毁，不常驻）。
 pub fn open_settings(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(SETTINGS_LABEL) {
@@ -32,7 +76,7 @@ pub fn open_settings(app: &AppHandle) {
         SETTINGS_LABEL,
         tauri::WebviewUrl::App("settings.html".into()),
     )
-    .title("AkiMark 设置")
+    .title(tray_labels(&current_locale()).0)
     .inner_size(460.0, 640.0)
     .resizable(false)
     .maximizable(false)
@@ -64,9 +108,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 第二次启动 → 切换标注模式
-            let state = app.state::<AppState>();
-            overlay::toggle_drawing(app, &state);
+            // 第二次启动 → 打开设置窗口（双击图标的多半是想改配置；
+            // 标注切换已有全局热键/托盘，不缺这一个入口）
+            crate::log::log("single-instance: 二次启动，打开设置窗口");
+            open_settings(app);
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -84,7 +129,14 @@ pub fn run() {
             crate::log::log("setup 开始");
 
             let config = load_config(app.handle());
-            app.manage(AppState::new(config));
+            app.manage(AppState::new(config.clone()));
+
+            // UI locale（错误文案语言）与托盘菜单按配置初始化
+            let locale = config.general.locale.clone();
+            if let Ok(mut s) = APP_LOCALE.write() {
+                *s = locale.clone();
+            }
+            crate::error::set_error_locale(&locale);
 
             setup_tray(app.handle())?;
             shortcuts::register_shortcuts(app.handle())?;
@@ -128,11 +180,45 @@ pub fn run() {
         .expect("error while running AkiMark");
 }
 
+/// 托盘 id（语言切换后按 id 取回托盘重建菜单）
+const TRAY_ID: &str = "main";
+
+/// 用当前 locale 重建托盘菜单（设置窗口保存语言后调用）。
+/// 事件 id 不变，handler 无需重绑。
+fn rebuild_tray_menu(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let (_, toggle_text, settings_text, clear_text, quit_text) = tray_labels(&current_locale());
+    let menu = match (
+        MenuItem::with_id(app, "toggle", toggle_text, true, None::<&str>),
+        MenuItem::with_id(app, "settings", settings_text, true, None::<&str>),
+        MenuItem::with_id(app, "clear", clear_text, true, None::<&str>),
+        MenuItem::with_id(app, "quit", quit_text, true, None::<&str>),
+    ) {
+        (Ok(t), Ok(s), Ok(c), Ok(q)) => match Menu::with_items(app, &[&t, &s, &c, &q]) {
+            Ok(m) => m,
+            Err(e) => {
+                crate::log::log(&format!("rebuild_tray_menu: 菜单创建失败: {e}"));
+                return;
+            }
+        },
+        _ => {
+            crate::log::log("rebuild_tray_menu: 菜单项创建失败");
+            return;
+        }
+    };
+    if let Err(e) = tray.set_menu(Some(menu)) {
+        crate::log::log(&format!("rebuild_tray_menu: set_menu 失败: {e}"));
+    }
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let toggle = MenuItem::with_id(app, "toggle", "标注 / 退出标注", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
-    let clear = MenuItem::with_id(app, "clear", "清屏", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let (_, toggle_text, settings_text, clear_text, quit_text) = tray_labels(&current_locale());
+    let toggle = MenuItem::with_id(app, "toggle", toggle_text, true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", settings_text, true, None::<&str>)?;
+    let clear = MenuItem::with_id(app, "clear", clear_text, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", quit_text, true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &settings, &clear, &quit])?;
 
     // 无默认图标时跳过托盘创建（托盘是增强功能，不应阻塞启动）
@@ -141,7 +227,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     };
 
-    let _tray = TrayIconBuilder::new()
+    let _tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon.clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
