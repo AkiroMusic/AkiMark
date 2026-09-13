@@ -1,0 +1,20 @@
+# 第三方参考快照（本地对照用）
+reference-markeron-master/
+
+# 构建产物与依赖
+dist/
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+
+# 大文件/生成文件
+package-lock.json
+src-tauri/Cargo.lock
+
+# Markdown 不格式化（避免历史段落整体重排）
+*.md
+
+# 本地工具目录
+.omo/
+.codegraph/
+.zcode/

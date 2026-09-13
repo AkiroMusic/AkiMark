@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import ToolToolbar from "./ToolToolbar.vue";
-import { TOOL_DEFS, WIDTH_MAX } from "../constants/tools";
+import { TOOL_DEFS } from "../constants/tools";
 import { COLOR_PALETTE } from "../constants/colors";
 
 function mountToolbar(

@@ -21,17 +21,6 @@ const MAX_CANVAS_PIXELS = 9_000_000;
 /** 渐隐笔清理/渐隐动画的轮询周期（ms） */
 const FADE_TICK_MS = 250;
 
-/** 马赛克底图（屏幕截屏）：模块级共享，导出时可用新截屏临时替换 */
-let blurBase: CanvasImageSource | null = null;
-/** 马赛克纯色底（黑板模式）：优先于截屏，避免马赛克暴露屏幕内容 */
-let blurBaseColor: string | null = null;
-/**
- * 马赛克合成底图：屏幕/板书 + 全部已提交标注（马赛克除外）。
- * 打码时以它为源，因此标注与背景会被一起模糊。
- */
-let blurComposite: HTMLCanvasElement | null = null;
-let blurCompositeDirty = true;
-
 interface UndoEntry {
   type: "add" | "remove" | "clear";
   actions: DrawAction[];
@@ -89,6 +78,18 @@ export function useDrawing(
   let previewDirty = false;
   let rafId: number | null = null;
   let dpr = 1;
+
+  // 马赛克底图状态（实例私有，避免多实例互相污染——曾经的模块级共享 bug）
+  /** 马赛克底图（屏幕截屏）；null = 无截屏底 */
+  let blurBase: CanvasImageSource | null = null;
+  /** 马赛克纯色底（黑板模式）：优先于截屏，避免马赛克暴露屏幕内容 */
+  let blurBaseColor: string | null = null;
+  /**
+   * 马赛克合成底图：屏幕/板书 + 全部已提交标注（马赛克除外）。
+   * 打码时以它为源，因此标注与背景会被一起模糊。
+   */
+  let blurComposite: HTMLCanvasElement | null = null;
+  let blurCompositeDirty = true;
 
   /** 橡皮拖动快照：笔画开始时的 history 层位图。拖动期间按
    * "清层 → 贴快照 → 擦当前笔画"做 O(笔画长度) 增量更新，
@@ -685,7 +686,8 @@ export function useDrawing(
 
   function stopFadeTimer() {
     if (fadeTimer !== null) {
-      clearInterval(fadeTimer);
+      // window. 前缀：避免 @types/node（测试依赖带入）污染全局 setInterval 签名
+      window.clearInterval(fadeTimer);
       fadeTimer = null;
     }
   }
@@ -693,7 +695,7 @@ export function useDrawing(
   /** 有渐隐笔画时启动轮询（无则保持空闲，避免常驻定时器） */
   function ensureFadeTimer() {
     if (fadeTimer === null) {
-      fadeTimer = setInterval(fadeTick, FADE_TICK_MS);
+      fadeTimer = window.setInterval(fadeTick, FADE_TICK_MS);
     }
   }
 
