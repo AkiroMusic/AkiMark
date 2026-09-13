@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+// （引擎的渐隐定时器走 window.setInterval，需 DOM 全局；fake timers 同步 patch）
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ref } from "vue";
 import { useDrawing } from "./useDrawing";
@@ -349,16 +351,16 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     expect(historyCtx.calls).toContain("drawImage");
   });
 
-  it("马赛克笔：无底图时不抛错、不渲染", () => {
-    const { drawing, historyCtx } = setup();
+  it("马赛克笔：无截屏底图时不抛错（合成底图兜底，正常提交）", () => {
+    const { drawing } = setup();
     drawing.setBlurBase(null);
     drawing.currentTool.value = "blur";
     drawing.startDraw(pointer(10, 10));
     drawing.drawTo(pointer(50, 50));
     drawing.endDraw();
     flushRaf();
+    // 生产环境（浏览器 DOM）会构建合成底图兜底采样；此处只锁"不抛错 + 正常提交"
     expect(drawing.canClear.value).toBe(true);
-    expect(historyCtx.calls).not.toContain("drawImage");
   });
 
   it("马赛克笔：hardReset 清空底图", () => {

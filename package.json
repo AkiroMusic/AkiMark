@@ -12,12 +12,12 @@
     "dev": "tauri dev",
     "dev:fe": "vite",
     "build": "tauri build",
-    "build:fe": "vue-tsc --noEmit && vite build",
+    "build:fe": "vue-tsc --noEmit && tsc -p tsconfig.node.json && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",
-    "format": "prettier --write \"src/**/*.{ts,vue,css}\" \"*.{ts,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,vue,css}\" \"*.{ts,json}\"",
+    "format": "prettier --write \"src/**/*.{ts,vue,css}\" \"*.{ts,json}\" \"*.html\" \"scripts/*.mjs\"",
+    "format:check": "prettier --check \"src/**/*.{ts,vue,css}\" \"*.{ts,json}\" \"*.html\" \"scripts/*.mjs\"",
     "icon": "node scripts/gen-icon.mjs"
   },
   "dependencies": {

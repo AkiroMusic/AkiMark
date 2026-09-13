@@ -15,7 +15,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "types": []
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]
 }

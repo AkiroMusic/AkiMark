@@ -14,8 +14,10 @@
 
 ## Checklist / 检查清单
 
-- [ ] `npm run build:fe` passes (vue-tsc + vite) / 前端类型检查与构建通过
-- [ ] `cargo check` passes with no warnings / Rust 检查无警告
+- [ ] `npm run lint` + `npm run format:check` pass / 前端 lint 与格式检查通过
+- [ ] `npm test` passes / 前端测试通过
+- [ ] `npm run build:fe` passes (vue-tsc + tsc(node) + vite) / 前端类型检查与构建通过
+- [ ] `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` pass (in `src-tauri/`) / Rust 检查与测试通过
 - [ ] Tested manually with `npm run dev` / 已用开发模式手动测试
 - [ ] Updated docs (README, i18n) if needed / 如需要已更新文档
 - [ ] No `any` / `@ts-ignore` introduced / 未引入类型绕过
