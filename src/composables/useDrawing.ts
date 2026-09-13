@@ -14,8 +14,9 @@ import {
 } from "../constants/tools";
 import { DEFAULT_COLOR } from "../constants/colors";
 
-/** 最大画布像素（防超大显示器 OOM） */
-const MAX_CANVAS_PIXELS = 6_000_000;
+/** 最大画布像素（防超大显示器 OOM）：超出时按面积降采样位图（CSS 尺寸不变，
+ * 仅清晰度略降）。普通屏（≤4K@1x / ≤2K@2x，约 8.3M px）不受影响。 */
+const MAX_CANVAS_PIXELS = 9_000_000;
 
 /** 渐隐笔清理/渐隐动画的轮询周期（ms） */
 const FADE_TICK_MS = 250;
@@ -38,6 +39,7 @@ interface UndoEntry {
 
 interface CanvasRefs {
   history: Ref<HTMLCanvasElement | null>;
+  fading: Ref<HTMLCanvasElement | null>;
   preview: Ref<HTMLCanvasElement | null>;
 }
 
@@ -48,8 +50,10 @@ function pressureScale(p?: number): number {
 }
 
 /**
- * 双 canvas 绘制引擎：
- * - historyCanvas：已提交笔画（缓存渲染，失效时才重绘）
+ * 三 canvas 绘制引擎：
+ * - historyCanvas：已提交的非渐隐笔画（缓存渲染，失效时才重绘）
+ * - fadingCanvas：渐隐笔画 + 橡皮擦除（独立层：渐隐动画每 tick 只重绘本层，
+ *   不再全量重放历史）
  * - previewCanvas：进行中的笔画（高频 rAF 更新）
  * - rAF 循环 + dirty flags，空闲时零消耗
  */
@@ -78,11 +82,34 @@ export function useDrawing(
 
   // 渲染状态
   let historyCtx: CanvasRenderingContext2D | null = null;
+  let fadingCtx: CanvasRenderingContext2D | null = null;
   let previewCtx: CanvasRenderingContext2D | null = null;
   let historyDirty = false;
+  let fadingDirty = false;
   let previewDirty = false;
   let rafId: number | null = null;
   let dpr = 1;
+
+  /** 橡皮拖动快照：笔画开始时的 history 层位图。拖动期间按
+   * "清层 → 贴快照 → 擦当前笔画"做 O(笔画长度) 增量更新，
+   * 替代每帧全量重放历史（含马赛克逐块 drawImage 采样）。 */
+  let eraserSnapshot: HTMLCanvasElement | null = null;
+
+  function invalidateEraserSnapshot() {
+    eraserSnapshot = null;
+  }
+
+  function takeEraserSnapshot() {
+    invalidateEraserSnapshot();
+    if (!historyCtx || typeof document === "undefined") return;
+    const snap = document.createElement("canvas");
+    snap.width = historyCtx.canvas.width;
+    snap.height = historyCtx.canvas.height;
+    const sctx = snap.getContext("2d");
+    if (!sctx) return;
+    sctx.drawImage(historyCtx.canvas, 0, 0);
+    eraserSnapshot = snap;
+  }
 
   const canUndo = computed(() => undoStack.value.length > 0);
   const canRedo = computed(() => redoStack.value.length > 0);
@@ -111,13 +138,13 @@ export function useDrawing(
       scale,
       Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, width * height)),
     );
-    dpr = Math.max(1, dpr);
 
     const cssW = Math.floor(width);
     const cssH = Math.floor(height);
 
     for (const [canvas, key] of [
       [refs.history.value, "historyCtx"],
+      [refs.fading.value, "fadingCtx"],
       [refs.preview.value, "previewCtx"],
     ] as const) {
       if (!canvas) continue;
@@ -127,6 +154,7 @@ export function useDrawing(
       canvas.style.height = `${cssH}px`;
       const ctx = canvas.getContext("2d");
       if (key === "historyCtx") historyCtx = ctx;
+      else if (key === "fadingCtx") fadingCtx = ctx;
       else previewCtx = ctx;
       if (ctx) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -135,9 +163,12 @@ export function useDrawing(
       }
     }
 
-    // 画布尺寸变化 → 马赛克合成底图需按新尺寸重建
+    // 画布尺寸变化 → 马赛克合成底图需按新尺寸重建；橡皮快照随之失效；
+    // 三层全部重绘
     blurCompositeDirty = true;
+    invalidateEraserSnapshot();
     historyDirty = true;
+    fadingDirty = true;
     scheduleRender();
   }
 
@@ -536,7 +567,7 @@ export function useDrawing(
     }
   }
 
-  /** 全量重绘历史层（撤销/清屏/初始化时调用） */
+  /** 全量重绘历史层（撤销/清屏/初始化时调用；渐隐笔画在独立层，此处跳过） */
   function redrawHistory() {
     if (!historyCtx) return;
     // 马赛克合成底图依赖当前 history（含标注），先重建再画 blur 动作
@@ -548,6 +579,7 @@ export function useDrawing(
       historyCtx.canvas.height,
     );
     for (const action of history.value) {
+      if (action.tool === "fading") continue;
       drawAction(historyCtx, action);
     }
     // 进行中的橡皮：按住时实时作用到历史层（已提交笔画被立即擦除）
@@ -555,6 +587,20 @@ export function useDrawing(
       drawAction(historyCtx, currentAction);
     }
     historyDirty = false;
+  }
+
+  /** 重绘渐隐层：渐隐笔画 + 橡皮擦除（保持与单层时代一致的擦除语义）。
+   * fadeTick 每 250ms 只重读本层，不再全量重放历史。 */
+  function redrawFading() {
+    if (!fadingCtx) return;
+    ensureBlurComposite();
+    fadingCtx.clearRect(0, 0, fadingCtx.canvas.width, fadingCtx.canvas.height);
+    for (const action of history.value) {
+      if (action.tool === "fading" || action.tool === "eraser") {
+        drawAction(fadingCtx, action);
+      }
+    }
+    fadingDirty = false;
   }
 
   function renderPreview() {
@@ -574,6 +620,7 @@ export function useDrawing(
 
   function render() {
     if (historyDirty) redrawHistory();
+    if (fadingDirty) redrawFading();
     if (previewDirty) renderPreview();
   }
 
@@ -641,8 +688,9 @@ export function useDrawing(
       blurCompositeDirty = true;
     }
     if (hasFading) {
-      // 周期重绘呈现渐隐动画（透明度随时间线性下降）
-      historyDirty = true;
+      // 周期重绘呈现渐隐动画（透明度随时间线性下降）：
+      // 只重绘渐隐层，历史层不含渐隐笔画，无需全量重放
+      fadingDirty = true;
       scheduleRender();
     } else {
       stopFadeTimer();
@@ -665,6 +713,10 @@ export function useDrawing(
     // 渐隐笔记录诞生时刻，供透明度衰减与过期清理使用
     if (currentTool.value === "fading") {
       currentAction.bornAt = Date.now();
+    }
+    // 橡皮：快照当前历史层位图，拖动期间做增量擦除（见 eraserSnapshot）
+    if (currentTool.value === "eraser") {
+      takeEraserSnapshot();
     }
     // 形状工具：起始点即两点起点
     if (isShape) currentAction.points.push({ x: p.x, y: p.y });
@@ -710,9 +762,24 @@ export function useDrawing(
     currentAction.points.push(...points);
     lastPoint = p;
     previewDirty = true;
-    // 橡皮实时擦除：标记历史层脏，让 redrawHistory 把进行中的橡皮作用到已提交笔画上
+    // 橡皮实时擦除：有快照时走 O(笔画长度) 增量路径（清层 → 贴快照 → 擦当前
+    // 笔画），无快照（node 测试环境 / 拖动期间发生过 undo 等）回退全量重绘
     if (currentAction.tool === "eraser") {
-      historyDirty = true;
+      if (eraserSnapshot && historyCtx) {
+        historyCtx.save();
+        historyCtx.setTransform(1, 0, 0, 1, 0, 0);
+        historyCtx.clearRect(
+          0,
+          0,
+          historyCtx.canvas.width,
+          historyCtx.canvas.height,
+        );
+        historyCtx.drawImage(eraserSnapshot, 0, 0);
+        historyCtx.restore();
+        drawAction(historyCtx, currentAction);
+      } else {
+        historyDirty = true;
+      }
     }
     scheduleRender();
   }
@@ -766,7 +833,14 @@ export function useDrawing(
     }
     history.value.push(currentAction);
     undoStack.value.push({ type: "add", actions: [currentAction] });
-    if (currentAction.tool === "fading") ensureFadeTimer();
+    if (currentAction.tool === "fading") {
+      ensureFadeTimer();
+      // 渐隐层提交：历史层不含渐隐笔画，无需全量重放
+      fadingDirty = true;
+    } else {
+      historyDirty = true;
+    }
+    invalidateEraserSnapshot();
     redoStack.value = [];
     currentAction = null;
     lastPoint = null;
@@ -794,6 +868,8 @@ export function useDrawing(
     }
     blurCompositeDirty = true;
     historyDirty = true;
+    fadingDirty = true;
+    invalidateEraserSnapshot();
     scheduleRender();
   }
 
@@ -818,6 +894,8 @@ export function useDrawing(
     if (entry.actions.some((a) => a.tool === "fading")) ensureFadeTimer();
     blurCompositeDirty = true;
     historyDirty = true;
+    fadingDirty = true;
+    invalidateEraserSnapshot();
     scheduleRender();
   }
 
@@ -828,6 +906,8 @@ export function useDrawing(
     history.value = [];
     blurCompositeDirty = true;
     historyDirty = true;
+    fadingDirty = true;
+    invalidateEraserSnapshot();
     scheduleRender();
   }
 
@@ -843,7 +923,9 @@ export function useDrawing(
     blurComposite = null;
     blurCompositeDirty = true;
     stopFadeTimer();
+    invalidateEraserSnapshot();
     historyDirty = true;
+    fadingDirty = true;
     previewDirty = true;
     scheduleRender();
   }
@@ -870,20 +952,24 @@ export function useDrawing(
     ctx.lineJoin = "round";
     const prevBase = blurBase;
     const prevColor = blurBaseColor;
-    if (base) {
-      // 导出时用新截屏做马赛克底（黑板模式 base 为 null，沿用板书纯色底）
-      blurBase = base;
-      blurBaseColor = null;
+    try {
+      if (base) {
+        // 导出时用新截屏做马赛克底（黑板模式 base 为 null，沿用板书纯色底）
+        blurBase = base;
+        blurBaseColor = null;
+      }
+      // 重建马赛克合成底图，保证导出图里 blur 动作采样到最新画面
+      blurCompositeDirty = true;
+      ensureBlurComposite();
+      for (const action of history.value) {
+        drawAction(ctx, action);
+      }
+    } finally {
+      // 无论渲染是否抛错都要恢复底图，否则马赛克永久采样到导出截屏
+      blurBase = prevBase;
+      blurBaseColor = prevColor;
+      blurCompositeDirty = true;
     }
-    // 重建马赛克合成底图，保证导出图里 blur 动作采样到最新画面
-    blurCompositeDirty = true;
-    ensureBlurComposite();
-    for (const action of history.value) {
-      drawAction(ctx, action);
-    }
-    blurBase = prevBase;
-    blurBaseColor = prevColor;
-    blurCompositeDirty = true;
   }
 
   /** 设置马赛克底图（屏幕截屏）；null 表示清除 */

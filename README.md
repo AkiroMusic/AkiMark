@@ -6,7 +6,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **Beta** — This is an informal preview release (v0.2.0). Features and behavior may change; expect rough edges.
+> ⚠️ **Beta** — This is an informal preview release (v0.2.1). Features and behavior may change; expect rough edges.
 
 ---
 
@@ -23,7 +23,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board for free-hand lecturing (press `B`; export skips the screen capture).
 - 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `M` / `Z`; scroll to change the level).
 - 📸 **Export screenshot** — Composite annotations onto the underlying screen and save as PNG (press `S` or the toolbar button; custom export folder).
-- ↩️ **Undo / Redo / Clear** — Full history stack.
+- ↩️ **Undo / Redo / Clear** — History stack (expired fading strokes are purged from it).
 - 🖱️ **Click-through mode** — Toggle mouse pass-through while keeping annotations visible.
 - 🧹 **Auto click-through** — Overlay auto-penetrates 120ms after losing focus (with a 600ms activation guard).
 - 🪟 **System tray resident** — Zero-drama background presence; single-instance guard.
@@ -66,7 +66,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | `X` | Toggle click-through |
 | `Ctrl+C` | Clear |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Esc` | Exit annotation mode |
+| `Esc` | Step back (zoom → spotlight → board → exit annotation) |
 
 ### Mouse
 
@@ -84,7 +84,7 @@ AkiMark's overlay modes are designed to be mutually self-consistent — each mod
 - **Zoom ↔ spotlight are mutually exclusive** — entering one exits the other, so the scroll wheel always has a single meaning (spotlight radius when spotlight is on, zoom level when zoomed).
 - **Zoom ↔ click-through are mutually exclusive** — entering one exits the other, avoiding a frozen zoomed screenshot blocking the app you are clicking through to.
 - **Spotlight + click-through are allowed** — spotlight is a pure visual overlay (it never intercepts the mouse), so it works as a "laser pointer" while clicking through.
-- **`Esc` steps out layer by layer** — zoom first, then board mode, then annotation mode.
+- **`Esc` steps out layer by layer** — zoom first, then spotlight, then board mode, then annotation mode.
 - Click-through is additionally refused at the backend level while a board is active, so the global hotkey and the auto-penetration-on-focus-loss feature can never bypass the rule.
 
 ---
@@ -155,7 +155,6 @@ Settings are persisted as JSON in the OS app-config directory (`%APPDATA%\com.ak
   },
   "general": {
     "locale": "zh-CN",
-    "theme": "dark",
     "preserveDrawings": false,
     "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
@@ -200,7 +199,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **内测版** — 这是非正式的内测预览版（v0.2.0）。功能与行为可能随时调整，可能尚有不完善之处。
+> ⚠️ **内测版** — 这是非正式的内测预览版（v0.2.1）。功能与行为可能随时调整，可能尚有不完善之处。
 
 ---
 
@@ -217,7 +216,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🧑‍🏫 **白板 / 黑板模式** — 一键切换纯白 / 纯黑板书底，自由板书（按 `B`；导出时跳过截屏）。
 - 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `M` / `Z`；滚轮调整倍率）。
 - 📸 **导出截图** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录）。
-- ↩️ **撤销 / 重做 / 清屏** — 完整的历史操作栈。
+- ↩️ **撤销 / 重做 / 清屏** — 历史操作栈（渐隐笔画过期后会自动出栈）。
 - 🖱️ **穿透模式** — 切换鼠标穿透，同时保持标注可见。
 - 🧹 **自动穿透** — 覆盖层失焦 120ms 后自动穿透（带 600ms 激活保护）。
 - 🪟 **系统托盘常驻** — 零打扰的后台驻留；带单实例保护。
@@ -260,7 +259,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | `X` | 切换穿透 |
 | `Ctrl+C` | 清屏 |
 | `Ctrl+Z` / `Ctrl+Y` | 撤销 / 重做 |
-| `Esc` | 退出标注模式 |
+| `Esc` | 逐级退出（缩放 → 聚光灯 → 板书 → 退出标注） |
 
 ### 鼠标操作
 
@@ -278,7 +277,7 @@ AkiMark 的叠加模式经过全面设计，保证逻辑完全自洽 —— 任�
 - **缩放 ↔ 聚光灯互斥** —— 进入其中一个自动退出另一个，滚轮在任何时刻只有一个含义（聚光灯开启时调半径，缩放时调倍率）。
 - **缩放 ↔ 穿透互斥** —— 进入其中一个自动退出另一个，避免冻结的放大画面挡住你正要穿透操作的应用。
 - **聚光灯 + 穿透可共存** —— 聚光灯是纯视觉叠加（从不拦截鼠标），穿透时相当于"激光笔"高亮。
-- **`Esc` 逐级退出** —— 先退缩放，再退板书，最后退出标注。
+- **`Esc` 逐级退出** —— 先退缩放，再退聚光灯，再退板书，最后退出标注。
 - **后端兜底** —— 板书期间穿透还会在后端被拒绝，全局热键与失焦自动穿透两条路径都无法绕过该规则。
 
 ---
@@ -349,7 +348,6 @@ npm run icon         # 从 assets/icon-1024.png 生成
   },
   "general": {
     "locale": "zh-CN",
-    "theme": "dark",
     "preserveDrawings": false,
     "lineWidths": { "stroke": 3, "highlighter": 10, "eraser": 12 },
     "defaultTool": "pen",
@@ -382,4 +380,4 @@ npm run icon         # 从 assets/icon-1024.png 生成
 
 ---
 
-*AkiroMusic 用 💙 打造 —— 内测版 v0.2.0*
+*AkiroMusic 用 💙 打造 —— 内测版 v0.2.1*

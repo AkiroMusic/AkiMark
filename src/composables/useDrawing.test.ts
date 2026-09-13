@@ -96,14 +96,16 @@ function flushRaf() {
 
 function setup() {
   const historyCtx = createMockCtx();
+  const fadingCtx = createMockCtx();
   const previewCtx = createMockCtx();
   const drawing = useDrawing({
     history: ref(fakeCanvas(historyCtx.ctx)),
+    fading: ref(fakeCanvas(fadingCtx.ctx)),
     preview: ref(fakeCanvas(previewCtx.ctx)),
   });
   drawing.setupCanvases(1000, 800, 1);
   flushRaf();
-  return { drawing, historyCtx, previewCtx };
+  return { drawing, historyCtx, fadingCtx, previewCtx };
 }
 
 describe("useDrawing 状态机", () => {
@@ -305,6 +307,29 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     flushRaf();
     expect(drawing.canClear.value).toBe(true);
     expect(drawing.canUndo.value).toBe(true);
+  });
+
+  it("F4: fadeTick 只重绘渐隐层，不全量重放历史层", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const { drawing, historyCtx, fadingCtx } = setup();
+    // 一笔普通笔画 + 一笔渐隐笔画
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(50, 50));
+    drawing.endDraw();
+    drawing.currentTool.value = "fading";
+    drawing.startDraw(pointer(20, 20));
+    drawing.drawTo(pointer(60, 60));
+    drawing.endDraw();
+    flushRaf();
+
+    const historyCallsAfterCommit = historyCtx.calls.length;
+    // 推进一个 tick（250ms）：渐隐动画应只动渐隐层
+    vi.advanceTimersByTime(250);
+    flushRaf();
+
+    // fadeTick 不应触发历史层重绘
+    expect(historyCtx.calls.length).toBe(historyCallsAfterCommit);
+    expect(fadingCtx.calls).toContain("clearRect");
   });
 
   it("马赛克笔：setBlurBase 后绘制触发 drawImage 渲染", () => {
