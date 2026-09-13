@@ -6,20 +6,21 @@ import {
   reactive,
   ref,
   watch,
-  nextTick,
 } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import ToolToolbar from "./ToolToolbar.vue";
 import { useDrawing } from "../composables/useDrawing";
 import { mapToCapture } from "../composables/zoomMapping";
+import { useToast } from "../composables/useToast";
+import { useTextEditor } from "../composables/useTextEditor";
+import { usePrefsSync } from "../composables/usePrefsSync";
+import { useOverlayModes } from "../composables/useOverlayModes";
 import { COLOR_PALETTE } from "../constants/colors";
 import {
   BOARD_COLORS,
   SPOTLIGHT,
-  TOAST_DURATION_MS,
   TOAST_EXPORT_MS,
   TOOL_DEFS,
-  ZOOM_LEVELS,
 } from "../constants/tools";
 import { useI18n } from "../i18n";
 import type { AppConfig } from "../configTypes";
@@ -32,20 +33,18 @@ const TOOL_HOTKEY_MAP: Record<string, Tool> = Object.fromEntries(
   TOOL_DEFS.map((def) => [def.hotkey, def.id]),
 );
 
-// 画布引用
+// ---- 画布与视口 ----
 const historyCanvas = ref<HTMLCanvasElement | null>(null);
 const fadingCanvas = ref<HTMLCanvasElement | null>(null);
 const previewCanvas = ref<HTMLCanvasElement | null>(null);
+const viewport = reactive({ w: window.innerWidth, h: window.innerHeight });
 
-// 工具栏/状态
-const showToolbar = ref(false);
-const isPenetrating = ref(false);
-const toast = ref<{ text: string; ts: number } | null>(null);
+// ---- Toast / 横幅 ----
+const { toast, showToast, dispose: disposeToast } = useToast();
 /** 初始化失败横幅：listeners/config 加载失败时显示（否则用户看到"窗口弹出但画不了"却无解释） */
 const initError = ref(false);
-/** 最近使用的自定义颜色（取色器加入，随绘制预设持久化） */
-const recentColors = ref<string[]>([]);
-/** 工具栏位置（纯 UI 状态，localStorage 记忆；不放 config 避免污染用户配置文件） */
+
+// ---- 工具栏位置（localStorage 记忆；不放 config 避免污染用户配置文件） ----
 const TOOLBAR_POS_KEY = "akimark.toolbarPos";
 const toolbarPos = ref<{ x: number; y: number } | null>(
   (() => {
@@ -65,55 +64,104 @@ function onToolbarMoved(pos: { x: number; y: number }) {
     // localStorage 不可用时静默降级为不记忆
   }
 }
-/** 取色器选定自定义色：去重后置顶，最多保留 4 个，并随预设落盘 */
-function addRecentColor(color: string) {
-  const next = [color, ...recentColors.value.filter((c) => c !== color)].slice(
-    0,
-    4,
-  );
-  recentColors.value = next;
-  schedulePrefsSave();
-}
 
-// 文字工具：待提交的输入框（x/y 为屏幕 client 坐标；anchor 为打开时的缩放锚点）
-const textEditing = ref<{
-  x: number;
-  y: number;
-  value: string;
-  anchor: Point | null;
-} | null>(null);
-const textInputRef = ref<HTMLInputElement | null>(null);
-
-// 聚光灯模式
-const spotlight = ref(false);
-// 聚光灯半径（CSS px）：滚轮 ±SPOTLIGHT.step 调整，SPOTLIGHT.min–max 范围
-const spotlightRadius = ref(SPOTLIGHT.initial);
-const viewport = reactive({ w: window.innerWidth, h: window.innerHeight });
-
-// 黑白板模式：无 / 白板 / 黑板（纯色底，导出时免截屏）
-const boardMode = ref<"none" | "white" | "black">("none");
-// 默认板书底色（配置项 boardDefault）：cycleBoard 从该色开始循环
-const boardDefault = ref<"white" | "black">("white");
-
-// 屏幕缩放（冻结缩放，ZoomIt Ctrl+1 式）：0 = 关闭 / 2 / 4 / 6 / 8
-const zoom = ref(0);
-const zoomBg = ref<string | null>(null);
-/** 替换缩放底图并释放旧 Blob URL（base64 data URL 会让数十 MB 字符串常驻内存） */
-function setZoomBg(next: string | null) {
-  if (zoomBg.value) URL.revokeObjectURL(zoomBg.value);
-  zoomBg.value = next;
-}
-/** 本次笔画按下时刻的光标位置：捕获空间逆映射基准（笔画中途不随鼠标移动） */
-const zoomAnchor = ref<Point | null>(null);
-
-// 光标位置（SVG 光标）
+// ---- 光标 / 手势标志 ----
 const cursorPos = ref({ x: 0, y: 0 });
 const cursorVisible = ref(false);
+/** 绘制手势进行中（pointerDown/rmbErasing 的响应式镜像）：缩放视觉原点据此锁定锚点 */
+const strokeActive = ref(false);
+
+// ---- 默认板书底色（配置项，prefsSync 写入 / modes 读取） ----
+const boardDefault = ref<"white" | "black">("white");
+
+/**
+ * 缩放逆映射：把屏幕坐标（client）映射回捕获空间坐标（纯函数见 zoomMapping.ts）。
+ * 闭包引用下方 modes 的 zoom/zoomAnchor —— 仅在指针事件时调用，届时已初始化。
+ */
+const coordMapper = (p: Point): Point =>
+  mapToCapture(p, modes.zoomAnchor.value, modes.zoom.value);
+
+const drawing = useDrawing(
+  {
+    history: historyCanvas,
+    fading: fadingCanvas,
+    preview: previewCanvas,
+  },
+  {},
+  { coordMapper },
+);
+
+// ---- 文字工具输入框 ----
+const {
+  textEditing,
+  setTextInputRef,
+  openTextEditor,
+  commitText,
+  onTextBlur,
+  dispose: disposeTextEditor,
+} = useTextEditor({
+  startText: (p, text) => drawing.startText(p, text),
+  zoom: () => modes.zoom.value,
+});
+
+// ---- 绘制预设同步（config ⇄ 会话） ----
+const {
+  preserveDrawings,
+  recentColors,
+  applyConfig,
+  applyConfigUpdate,
+  schedulePrefsSave,
+  flushPrefsSave,
+  addRecentColor,
+  isApplyingConfig,
+  dispose: disposePrefs,
+} = usePrefsSync({ drawing, boardDefault, setLocale });
+
+// ---- 模式状态机（板书/缩放/聚光灯/穿透/工具栏，互斥规则见 modeMutex.ts） ----
+// 导出/放大镜截屏期间锁定输入：防止键盘/指针事件篡改 history，导致导出图与所见不一致
+let uiLocked = false;
+const modes = useOverlayModes({
+  drawing,
+  showToast,
+  t,
+  uiLocked: {
+    get: () => uiLocked,
+    set: (v) => {
+      uiLocked = v;
+    },
+  },
+  textEditing,
+  boardDefault,
+  strokeActive,
+  cursorPos,
+});
+const {
+  showToolbar,
+  isPenetrating,
+  spotlight,
+  spotlightRadius,
+  boardMode,
+  zoom,
+  zoomBg,
+  zoomAnchor,
+  zoomOrigin,
+  toggleZoom,
+  toggleSpotlight,
+  cycleBoard,
+  togglePenetration,
+  stepBack,
+  exitAnnotation,
+  toggleToolbarWithSpace,
+  onWheel,
+  resetModes,
+  syncPenetrationFromBackend,
+  dispose: disposeModes,
+} = modes;
 
 /**
  * 光标渲染偏移：让 SVG 中"起作用的位置"对准鼠标。
- * - pen：笔尖在 viewBox 左下角 (约 3.5, 20.5) → 左移 3.5px、上移 20.5px
- * - highlighter / line / rect / circle / arrow / text：图形居中 → 左移/上移 12px
+ * - pen/fading：笔尖在 viewBox 左下角（约 3.5, 20.5）→ 左移 3.5px、上移 20.5px
+ * - 其余工具：图形居中 → 左移/上移 12px
  */
 const CURSOR_OFFSET: Record<string, [number, number]> = {
   pen: [-3.5, -20.5],
@@ -156,142 +204,18 @@ function cursorTransform(): string {
   return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
 }
 
-/** 缩放逆映射：把屏幕坐标（client）映射回捕获空间坐标（纯函数见 zoomMapping.ts）；
- * 未缩放/无锚点时恒等。注意渲染端 transform-origin 必须与 zoomAnchor 同源（见 zoomOrigin）。 */
-const coordMapper = (p: Point): Point =>
-  mapToCapture(p, zoomAnchor.value, zoom.value);
-
-/**
- * 缩放视觉原点：必须与 mapToCapture 的逆映射锚点同源。
- * 笔画进行中锁定为按下时冻结的 zoomAnchor（视图静止，笔画精确落在光标下）；
- * 空闲时跟随光标（放大镜式平移）。若两处不同源，笔画偏离量 = (1-z)×(光标-锚点)。
- */
-const zoomOrigin = computed(() =>
-  strokeActive.value && zoomAnchor.value ? zoomAnchor.value : cursorPos.value,
-);
-
-const drawing = useDrawing(
-  {
-    history: historyCanvas,
-    fading: fadingCanvas,
-    preview: previewCanvas,
-  },
-  {},
-  { coordMapper },
-);
-
-/** 应用配置守卫：applyConfig 批量赋值期间抑制"用户改动"回存 */
-let applyingConfig = false;
-let applyingConfigTimer: number | null = null;
-let prefsSaveTimer: number | null = null;
-let prefsSaveInFlight = false;
-let prefsSaveQueued = false;
-/** 配置项 preserveDrawings：为 true 时退出/重进标注保留已有笔迹 */
-let preserveDrawings = false;
-
-/** 启动时完整应用 config：绘制预设 + 通用设置 */
-function applyConfig(cfg: AppConfig) {
-  applyingConfig = true;
-  drawing.currentTool.value = cfg.general.defaultTool;
-  drawing.currentColor.value = cfg.general.defaultColor;
-  recentColors.value = cfg.general.recentColors ?? [];
-  drawing.lineWidths.value = {
-    stroke: cfg.general.lineWidths.stroke,
-    highlighter: cfg.general.lineWidths.highlighter,
-    eraser: cfg.general.lineWidths.eraser,
-  };
-  applyConfigUpdate(cfg);
-  // watcher 是微任务，等它跑完再复位，避免把"应用配置"误判为用户改动触发回存；
-  // 用定时器句柄 + 覆盖式复位，防止同一 tick 内两次 config-changed 提前清掉守卫
-  if (applyingConfigTimer) window.clearTimeout(applyingConfigTimer);
-  applyingConfigTimer = window.setTimeout(() => {
-    applyingConfig = false;
-    applyingConfigTimer = null;
-  }, 0);
-}
-
-/**
- * 应用 config 更新中的"非会话状态"字段（config-changed 事件路径）。
- * 刻意不覆盖 currentTool/currentColor/lineWidths：它们是 overlay 的会话状态
- * （用户随手改动 + 防抖回存）；设置窗口保存任何设置都会广播全量 config，
- * 若无条件覆盖预设，防抖保存期间的用户最新选择会被陈旧快照回滚。
- */
-function applyConfigUpdate(cfg: AppConfig) {
-  boardDefault.value = cfg.general.boardDefault ?? "white";
-  preserveDrawings = cfg.general.preserveDrawings;
-  // 应用配置的语言（config.json 优先于 navigator.language 默认值）
-  if (cfg.general.locale === "en" || cfg.general.locale === "zh-CN") {
-    setLocale(cfg.general.locale);
-  }
-  // theme 字段：style.css 只有一套 Ethereal Glass 深色变量，无浅色主题实现，
-  // 纯外观配置暂不生效（保持现状，仅确保 locale 已应用）
-}
-
-/** 绘制预设防抖保存：用户改工具/颜色/线宽后 500ms 内无新改动才落盘 */
-function schedulePrefsSave() {
-  if (prefsSaveTimer) window.clearTimeout(prefsSaveTimer);
-  prefsSaveTimer = window.setTimeout(() => {
-    prefsSaveTimer = null;
-    void persistDrawingPrefs();
-  }, 500);
-}
-
-/** 立即保存当前绘制预设（退出标注时兜底） */
-function flushPrefsSave() {
-  if (prefsSaveTimer) {
-    window.clearTimeout(prefsSaveTimer);
-    prefsSaveTimer = null;
-  }
-  void persistDrawingPrefs();
-}
-
-async function persistDrawingPrefs() {
-  if (prefsSaveInFlight) {
-    // 保存进行中又有新改动：记脏，本次保存结束后补一次（避免改动被静默丢弃）
-    prefsSaveQueued = true;
-    return;
-  }
-  prefsSaveInFlight = true;
-  try {
-    await invoke("save_drawing_prefs", {
-      tool: drawing.currentTool.value,
-      color: drawing.currentColor.value,
-      lineWidths: {
-        stroke: drawing.lineWidths.value.stroke,
-        highlighter: drawing.lineWidths.value.highlighter,
-        eraser: drawing.lineWidths.value.eraser,
-      },
-      recentColors: recentColors.value,
-    });
-  } catch (err) {
-    console.warn("[akimark] save_drawing_prefs failed", err);
-  } finally {
-    prefsSaveInFlight = false;
-    if (prefsSaveQueued) {
-      prefsSaveQueued = false;
-      void persistDrawingPrefs();
-    }
-  }
-}
-
+// ---- 进行中标志 ----
 let pointerDown = false;
 let rmbErasing = false;
-/** 绘制手势进行中（响应式镜像 pointerDown/rmbErasing）：模板据此把缩放视觉原点锁定到锚点 */
-const strokeActive = ref(false);
 /** 右键按住擦除前的工具：松开右键后恢复 */
 let prevToolBeforeRmb: Tool | null = null;
-let toastTimer: number | null = null;
-/** 文字输入框聚焦兜底定时器（WebView2 焦点竞态重试） */
-let textFocusTimer: number | null = null;
 let exportInFlight = false;
-// 导出/放大镜截屏期间锁定输入：防止键盘/指针事件篡改 history，导致导出图与所见不一致
-let uiLocked = false;
 let clearListener: (() => void) | null = null;
 let modeListener: (() => void) | null = null;
 let configListener: (() => void) | null = null;
 let blockedListener: (() => void) | null = null;
 
-// ---- 画布尺寸（全屏铺满 overlay）----
+// ---- 画布尺寸（全屏铺满 overlay） ----
 function resizeCanvases() {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -404,59 +328,6 @@ function onPointerLeave() {
   cursorVisible.value = false;
 }
 
-// ---- 文字工具输入框 ----
-/** 打开时间戳：用于区分"焦点竞态 blur"与"用户离开 blur" */
-let textOpenedAt = 0;
-
-function openTextEditor(e: PointerEvent) {
-  const x = e.clientX;
-  const y = e.clientY;
-  textOpenedAt = Date.now();
-  // 记录屏幕坐标（输入框固定定位直接用）+ 缩放锚点（落笔时逆变换回捕获空间）
-  textEditing.value = { x, y, value: "", anchor: { x, y } };
-  focusTextInput();
-}
-
-/** 聚焦输入框：nextTick 优先，失败则 setTimeout 兜底（WebView2 焦点竞态） */
-function focusTextInput() {
-  nextTick(() => {
-    const el = textInputRef.value;
-    if (!el) return;
-    el.focus();
-    // 首次聚焦可能被 pointerdown 的默认行为抢走，200ms 内重试
-    if (textFocusTimer) window.clearTimeout(textFocusTimer);
-    textFocusTimer = window.setTimeout(() => {
-      textFocusTimer = null;
-      if (textEditing.value && document.activeElement !== textInputRef.value) {
-        textInputRef.value?.focus();
-      }
-    }, 200);
-  });
-}
-
-/** 输入框失焦：打开后 200ms 内的 blur 视为焦点竞态，不自动提交 */
-function onTextBlur() {
-  if (Date.now() - textOpenedAt < 200) {
-    focusTextInput();
-    return;
-  }
-  commitText();
-}
-
-/** 提交文字：落笔并关闭输入框（Esc/失焦取消） */
-function commitText(cancel = false) {
-  const ed = textEditing.value;
-  if (!ed) return;
-  textEditing.value = null;
-  if (!cancel && ed.value.trim()) {
-    // 缩放模式下把屏幕坐标逆变换回捕获空间再落笔（anchor 为输入框打开时刻的冻结锚点）
-    drawing.startText(
-      mapToCapture({ x: ed.x, y: ed.y }, ed.anchor, zoom.value),
-      ed.value,
-    );
-  }
-}
-
 function isOverToolbar(e: PointerEvent): boolean {
   const el = document.querySelector("[data-toolbar]");
   if (!el) return false;
@@ -469,7 +340,7 @@ function isOverToolbar(e: PointerEvent): boolean {
   );
 }
 
-// ---- 快捷键 ----
+// ---- 快捷键（模式类动作转发给 useOverlayModes，互斥规则集中在 modeMutex.ts） ----
 function onKeyDown(e: KeyboardEvent) {
   // 截屏导出期间锁定快捷键
   if (uiLocked) return;
@@ -489,7 +360,6 @@ function onKeyDown(e: KeyboardEvent) {
 
   // 模式切换类快捷键（板书/工具栏/穿透/聚光灯/缩放）带副作用（invoke/截屏/状态翻转），
   // 按住不放的 OS 自动重复会反复触发，统一忽略 repeat 事件。
-  // 与下方 switch 的模式分支共用同一常量，避免两处维护漂移。
   // meta 组合（Ctrl+Z/Y/C/D）除外：按住连续撤销/重做是合法操作。
   if (e.repeat && !meta && MODE_TOGGLE_KEYS.includes(k)) {
     return;
@@ -528,7 +398,7 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "x":
     case "X":
-      togglePenetration();
+      void togglePenetration();
       break;
     case "f":
     case "F":
@@ -537,7 +407,7 @@ function onKeyDown(e: KeyboardEvent) {
     case "m":
     case "M":
       // 放大镜已并入屏幕缩放：M/Z 同键开关
-      void toggleZoom();
+      toggleZoom();
       break;
     case "z":
     case "Z":
@@ -545,7 +415,7 @@ function onKeyDown(e: KeyboardEvent) {
         drawing.undo();
         showToast(t("action.undo"));
       } else {
-        void toggleZoom();
+        toggleZoom();
       }
       break;
     case "s":
@@ -575,15 +445,7 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "Escape":
       // 逐级退出：缩放 → 聚光灯 → 板书 → 标注模式（由最"浅"的叠加态开始）
-      if (zoom.value > 0) {
-        void toggleZoom();
-      } else if (spotlight.value) {
-        toggleSpotlight();
-      } else if (boardMode.value !== "none") {
-        cycleBoard();
-      } else {
-        exitDrawing();
-      }
+      stepBack();
       break;
   }
 }
@@ -604,151 +466,6 @@ function cycleColor(dir: 1 | -1) {
   const i = COLOR_PALETTE.indexOf(drawing.currentColor.value);
   const next = (i + dir + COLOR_PALETTE.length) % COLOR_PALETTE.length;
   drawing.currentColor.value = COLOR_PALETTE[next];
-}
-
-function showToast(text: string, duration = TOAST_DURATION_MS) {
-  toast.value = { text, ts: Date.now() };
-  if (toastTimer) window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => {
-    toast.value = null;
-  }, duration);
-}
-
-// ---- 穿透 / 退出 ----
-async function togglePenetration() {
-  // 板书模式是"专注书写"场景：穿透不可用（后端 set_board_active 兜底全局热键/自动穿透）
-  if (boardMode.value !== "none") {
-    showToast(t("action.penetrateInBoard"));
-    return;
-  }
-  const next = !isPenetrating.value;
-  isPenetrating.value = next;
-  try {
-    if (next) {
-      // 穿透与缩放互斥：进入穿透退出缩放，避免冻结放大画面挡住下方应用；
-      // 聚光灯是纯视觉叠加（pointer-events: none），可随穿透保留做"激光笔"
-      zoom.value = 0;
-      zoomAnchor.value = null;
-      await invoke("enter_penetration_mode");
-    } else {
-      await invoke("exit_penetration_mode");
-    }
-    showToolbar.value = false;
-  } catch (err) {
-    console.warn("[akimark] toggle_penetration invoke failed", err);
-    // 后端拒绝时回滚本地状态，避免 UI 与后端穿透状态不一致
-    isPenetrating.value = !next;
-    showToast(t("action.penetrationFailed"));
-  }
-}
-
-/**
- * 空格键切换工具栏显隐。
- * 穿透模式下工具栏即使显示也无法交互（鼠标事件穿透到下层应用），
- * 因此按空格时显式退出穿透并显示工具栏，保证工具栏可见可点，行为最不意外。
- */
-function toggleToolbarWithSpace() {
-  // 焦点在工具栏按钮上时先释放：避免按钮原生 Space 激活抢占。
-  // （不在每次点击后强制 blur——那会破坏键盘导航；只在 Space 按下时处理）
-  const active = document.activeElement as HTMLElement | null;
-  if (active?.closest("[data-toolbar]")) active.blur();
-  if (isPenetrating.value) {
-    isPenetrating.value = false;
-    void invoke("exit_penetration_mode").catch((err) => {
-      console.warn("[akimark] exit_penetration_mode failed", err);
-    });
-    showToolbar.value = true;
-    return;
-  }
-  showToolbar.value = !showToolbar.value;
-}
-
-// ---- 聚光灯 ----
-function toggleSpotlight() {
-  spotlight.value = !spotlight.value;
-  if (spotlight.value) {
-    // 聚光灯与缩放互斥：开启聚光灯时退出缩放，滚轮回归"调节半径"职责
-    zoom.value = 0;
-    zoomAnchor.value = null;
-    showToast(t("action.spotlight"));
-  }
-}
-
-// ---- 屏幕缩放（冻结缩放：截屏底图 + CSS scale 跟随光标，可绘制；放大镜已并入本模式）----
-async function toggleZoom() {
-  // 板书模式与缩放互斥：缩放底图是真实屏幕，会穿透板书纯色底，语义冲突
-  if (boardMode.value !== "none") {
-    showToast(t("action.zoomInBoard"));
-    return;
-  }
-  if (zoom.value === 0) {
-    // 缩放与聚光灯/穿透互斥：开启缩放时退出两者，滚轮回归"切换倍率"职责
-    spotlight.value = false;
-    if (isPenetrating.value) {
-      isPenetrating.value = false;
-      void invoke("exit_penetration_mode").catch((err) => {
-        console.warn("[akimark] exit_penetration_mode failed", err);
-      });
-      showToolbar.value = true;
-    }
-    const prevToolbar = showToolbar.value;
-    showToolbar.value = false;
-    textEditing.value = null;
-
-    uiLocked = true;
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-    try {
-      const base64 = await invoke<string>("capture_screen");
-      // base64 → Blob URL：data URL 会把整屏 PNG 的 base64 字符串常驻内存
-      //（4K/8K 下数十 MB），Blob URL 只持解码位图且可及时 revoke
-      const bin = atob(base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      setZoomBg(URL.createObjectURL(new Blob([bytes], { type: "image/png" })));
-      zoom.value = ZOOM_LEVELS[0];
-      showToast(t("action.zoom"));
-    } catch (err) {
-      console.warn("[akimark] toggle_zoom capture_screen failed", err);
-      showToast(t("action.captureFailed"));
-    } finally {
-      uiLocked = false;
-      showToolbar.value = prevToolbar;
-    }
-  } else {
-    // 关闭缩放：清空冻结底图与锚点，避免下次开启时残留旧画面
-    zoom.value = 0;
-    setZoomBg(null);
-    zoomAnchor.value = null;
-  }
-}
-
-/**
- * 滚轮：
- * - 聚光灯开启时调整聚光灯半径（±SPOTLIGHT.step，SPOTLIGHT.min–max）
- * - 否则缩放开启时调节倍率（ZOOM_LEVELS，带 transition 顺滑切换）
- */
-function onWheel(e: WheelEvent) {
-  if (spotlight.value) {
-    e.preventDefault();
-    spotlightRadius.value = Math.min(
-      SPOTLIGHT.max,
-      Math.max(
-        SPOTLIGHT.min,
-        spotlightRadius.value +
-          (e.deltaY < 0 ? SPOTLIGHT.step : -SPOTLIGHT.step),
-      ),
-    );
-    return;
-  }
-  if (zoom.value <= 0) return;
-  e.preventDefault();
-  const idx = ZOOM_LEVELS.indexOf(zoom.value);
-  const next =
-    e.deltaY < 0
-      ? ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, idx + 1)]
-      : ZOOM_LEVELS[Math.max(0, idx - 1)];
-  if (next !== zoom.value) zoom.value = next;
 }
 
 // ---- 马赛克笔底图 ----
@@ -795,40 +512,7 @@ async function ensureBlurBase() {
   }
 }
 
-// ---- 黑白板模式 ----
-function cycleBoard() {
-  // 直接切换配置的默认板书底色：none ⇄ boardDefault（一次点击直达设置里选的板，
-  // 不再循环两色，避免"点了两次才切到想用的板"）
-  const next: "none" | "white" | "black" =
-    boardMode.value === "none" ? boardDefault.value : "none";
-  boardMode.value = next;
-  if (next !== "none") {
-    // 进入板书：退出缩放与穿透（板书是"专注书写"场景，与两者互斥）
-    zoom.value = 0;
-    zoomAnchor.value = null;
-    if (isPenetrating.value) {
-      isPenetrating.value = false;
-      void invoke("exit_penetration_mode").catch((err) => {
-        console.warn("[akimark] exit_penetration_mode failed", err);
-      });
-      showToolbar.value = true;
-    }
-    // 同步马赛克底为板书纯色（不截屏）
-    drawing.setBlurBaseColor(
-      next === "white" ? BOARD_COLORS.white : BOARD_COLORS.black,
-    );
-    showToast(t(next === "white" ? "action.boardWhite" : "action.boardBlack"));
-  } else {
-    // 退出板书：清除纯色底，下次使用马赛克笔时重新截屏
-    drawing.setBlurBaseColor(null);
-  }
-  // 同步后端板书标志：板书期间拒绝穿透（全局热键/失焦自动穿透兜底）
-  void invoke("set_board_active", { active: next !== "none" }).catch((err) => {
-    console.warn("[akimark] set_board_active failed", err);
-  });
-}
-
-// ---- 导出截图 ----
+// ---- 导出截图 / 复制到剪贴板 ----
 async function exportScreenshot() {
   if (exportInFlight) return;
   exportInFlight = true;
@@ -935,35 +619,13 @@ async function composeExportCanvas(): Promise<HTMLCanvasElement> {
   }
 }
 
-async function exitDrawing() {
-  try {
-    await invoke("exit_drawing");
-  } catch (err) {
-    console.warn("[akimark] exit_drawing failed", err);
-  }
-}
-
-/** 复位叠加态（黑白板 / 缩放 / 聚光灯），随清屏与模式切换一起重置 */
-function resetOverlayState() {
-  boardMode.value = "none";
-  drawing.setBlurBaseColor(null);
-  zoom.value = 0;
-  setZoomBg(null);
-  zoomAnchor.value = null;
-  spotlight.value = false;
-  // 板书已退出：穿透恢复可用（后端同步）
-  void invoke("set_board_active", { active: false }).catch((err) => {
-    console.warn("[akimark] set_board_active failed", err);
-  });
-}
-
-// ---- 事件监听（Rust → 前端）----
+// ---- 事件监听（Rust → 前端） ----
 async function setupListeners() {
   const { listen } = await import("@tauri-apps/api/event");
 
   clearListener = await listen<boolean>("clear-drawing", () => {
     drawing.hardReset();
-    resetOverlayState();
+    resetModes();
   });
 
   // 板书期间穿透被后端拒绝（全局热键/失焦自动穿透路径）→ 弹提示
@@ -973,7 +635,7 @@ async function setupListeners() {
 
   configListener = await listen<AppConfig>("config-changed", (e) => {
     // 只应用非会话状态字段：工具/颜色/线宽是本窗口的会话状态，
-    // 被广播回滚会覆盖用户在防抖保存窗口内的最新选择（见 applyConfigUpdate）
+    // 被广播回滚会覆盖用户在防抖保存窗口内的最新选择（见 usePrefsSync）
     applyConfigUpdate(e.payload);
   });
 
@@ -989,29 +651,25 @@ async function setupListeners() {
       // 正常激活：重置画布尺寸；preserveDrawings 开启时保留已有笔迹
       requestAnimationFrame(() => {
         resizeCanvases();
-        if (!preserveDrawings) {
+        if (!preserveDrawings.value) {
           drawing.hardReset();
         }
-        resetOverlayState();
+        resetModes();
         // 新会话从干净状态开始：缩放/板书/聚光灯全部复位
         cursorVisible.value = true;
         showToolbar.value = true;
         isPenetrating.value = false;
       });
     } else if (mode === "penetration") {
-      isPenetrating.value = true;
-      showToolbar.value = false;
-      // 穿透与缩放互斥：全局热键切入穿透时同步退出缩放（聚光灯可随穿透保留）
-      zoom.value = 0;
-      zoomAnchor.value = null;
+      syncPenetrationFromBackend(true);
     } else if (mode === "hidden") {
       cursorVisible.value = false;
       showToolbar.value = false;
       isPenetrating.value = false;
-      if (!preserveDrawings) {
+      if (!preserveDrawings.value) {
         drawing.hardReset();
       }
-      resetOverlayState();
+      resetModes();
       // 退出标注时兜底落盘绘制预设
       flushPrefsSave();
     }
@@ -1040,9 +698,9 @@ onMounted(async () => {
   // 工具/颜色/线宽变化 → 防抖保存绘制预设（下次启动沿用）。
   // 必须在首个 await 之前注册：await 之后的代码运行在微任务续体里，
   // Vue 当前实例已复位，watcher 不会随组件卸载自动停止（HMR/重挂载时泄漏）。
-  // 先注册 watcher 再加载 config：applyConfig 期间由 applyingConfig 守卫跳过回存
+  // 先注册 watcher 再加载 config：applyConfig 期间由守卫跳过回存
   watch([drawing.currentTool, drawing.currentColor, drawing.lineWidths], () => {
-    if (applyingConfig) return;
+    if (isApplyingConfig()) return;
     // 右键临时橡皮：不把临时切换的工具写入预设（松开右键已自动恢复）
     if (rmbErasing) return;
     schedulePrefsSave();
@@ -1080,28 +738,14 @@ onBeforeUnmount(() => {
   configListener?.();
   blockedListener?.();
   drawing.destroy();
-  // 清理防抖保存定时器并兜底落盘
-  if (prefsSaveTimer) {
-    window.clearTimeout(prefsSaveTimer);
-    prefsSaveTimer = null;
-  }
+  // 各 composable 定时器/资源清理（toast/文字聚焦/防抖保存兜底落盘/缩放底图 Blob）
+  disposeToast();
+  disposeTextEditor();
+  disposePrefs();
+  disposeModes();
   if (resizeTimer) {
     window.clearTimeout(resizeTimer);
     resizeTimer = null;
-  }
-  void persistDrawingPrefs();
-  // 清理 Toast / 文字聚焦定时器与进行中标志，避免卸载后回调操作已销毁的 DOM
-  if (toastTimer) {
-    window.clearTimeout(toastTimer);
-    toastTimer = null;
-  }
-  if (textFocusTimer) {
-    window.clearTimeout(textFocusTimer);
-    textFocusTimer = null;
-  }
-  if (applyingConfigTimer) {
-    window.clearTimeout(applyingConfigTimer);
-    applyingConfigTimer = null;
   }
   blurCaptureInFlight = false;
   exportInFlight = false;
@@ -1189,13 +833,13 @@ onBeforeUnmount(() => {
       @toggle-spotlight="toggleSpotlight"
       @toggle-board="cycleBoard"
       @toggle-zoom="toggleZoom"
-      @exit="exitDrawing"
+      @exit="exitAnnotation"
     />
 
     <!-- 文字工具输入框 -->
     <input
       v-if="textEditing"
-      ref="textInputRef"
+      :ref="setTextInputRef"
       v-model="textEditing.value"
       class="text-input"
       :style="{ left: textEditing.x + 'px', top: textEditing.y + 'px' }"
