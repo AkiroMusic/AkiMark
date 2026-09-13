@@ -86,8 +86,10 @@ pub fn open_settings(app: &AppHandle) {
     // 后续窗口参数不同会导致 ERROR_NOT_READY (0x8007139F) 创建失败。
     // 注意：设置 additional_browser_args 会整体覆盖 wry 默认参数，须带上
     // 默认的 --disable-features（SmartScreen/OLE UI 等）。
+    // --disk-cache-size=16MB：应用零网络请求，HTTP 缓存纯属磁盘浪费
+    //（托盘常驻数周可膨胀到数百 MB，卸载残留问题的一半来源）。
     .additional_browser_args(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing",
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing --disk-cache-size=16777216",
     )
     .build()
     {

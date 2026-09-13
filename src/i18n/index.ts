@@ -82,6 +82,7 @@ const en: Messages = {
   "settings.helpInS": "Export screenshot (PNG)",
   "settings.helpInCtrlC": "Copy annotation to clipboard",
   "settings.helpInCtrlD": "Clear screen",
+  "settings.helpInScale": "Toolbar size (Ctrl+= larger / Ctrl+- smaller)",
   "settings.helpInCtrlZY": "Undo / Redo",
   "settings.helpInEsc":
     "Exit annotation mode (Esc steps out: zoom → spotlight → board → annotation)",
@@ -183,6 +184,7 @@ const zhCN: Messages = {
   "settings.helpInS": "导出截图（PNG）",
   "settings.helpInCtrlC": "复制标注到剪贴板",
   "settings.helpInCtrlD": "清屏",
+  "settings.helpInScale": "工具栏大小（Ctrl+= 放大 / Ctrl+- 缩小）",
   "settings.helpInCtrlZY": "撤销 / 重做",
   "settings.helpInEsc":
     "退出标注模式（Esc 逐级退出：缩放 → 聚光灯 → 板书 → 标注）",

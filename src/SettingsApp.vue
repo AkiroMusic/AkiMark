@@ -583,6 +583,10 @@ async function save() {
           <span class="help-desc">{{ t("settings.helpInCtrlD") }}</span>
         </div>
         <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+= / Ctrl+-</kbd>
+          <span class="help-desc">{{ t("settings.helpInScale") }}</span>
+        </div>
+        <div class="help-row">
           <kbd class="help-kbd font-mono">Ctrl+Z / Ctrl+Y</kbd>
           <span class="help-desc">{{ t("settings.helpInCtrlZY") }}</span>
         </div>

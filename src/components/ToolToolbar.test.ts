@@ -22,6 +22,7 @@ function mountToolbar(
       zoom: false,
       recentColors: [],
       initialPosition: null,
+      scale: 1,
       ...props,
     },
     global: {

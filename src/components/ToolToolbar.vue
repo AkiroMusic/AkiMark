@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { TOOL_DEFS, TOOL_WIDTH_GROUP, WIDTH_MAX } from "../constants/tools";
 import { COLOR_PALETTE } from "../constants/colors";
 import { useI18n } from "../i18n";
@@ -22,6 +22,8 @@ const props = defineProps<{
   recentColors: string[];
   /** 上次记住的工具栏位置（localStorage）；null = 默认顶部居中 */
   initialPosition: { x: number; y: number } | null;
+  /** 工具栏整体缩放（Ctrl+-/= 调整，0.6–1.5），防遮挡顶部内容 */
+  scale: number;
 }>();
 
 const emit = defineEmits<{
@@ -143,6 +145,20 @@ function onDragEnd() {
 onBeforeUnmount(() => {
   dragOrigin = null;
 });
+
+/** 根节点定位 + 缩放：缩放原点在顶部中点（缩小后仍贴顶，不飘走） */
+const rootStyle = computed(() => {
+  const base: Record<string, string> = {
+    transformOrigin: "top center",
+    transform: `translateX(-50%) scale(${props.scale})`,
+  };
+  if (pos.value) {
+    base.left = `${pos.value.x}px`;
+    base.top = `${pos.value.y}px`;
+    base.transform = `scale(${props.scale})`;
+  }
+  return base;
+});
 </script>
 
 <template>
@@ -150,11 +166,7 @@ onBeforeUnmount(() => {
     ref="rootEl"
     class="toolbar double-bezel"
     data-toolbar
-    :style="
-      pos
-        ? { left: `${pos.x}px`, top: `${pos.y}px`, transform: 'none' }
-        : undefined
-    "
+    :style="rootStyle"
     @pointerdown="onDragStart"
     @pointermove="onDragMove"
     @pointerup="onDragEnd"
@@ -441,6 +453,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  /* 顶部遮挡场景下提升可读性：比全局 glass-bg-strong（0.82）再实一档 */
+  background: rgba(23, 26, 35, 0.9);
   /* 窄屏/竖屏兜底：允许换行且不溢出视口 */
   flex-wrap: wrap;
   justify-content: center;

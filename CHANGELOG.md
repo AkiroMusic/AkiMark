@@ -5,6 +5,34 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-09-13
+
+Three user-reported fixes plus WebView2 disk-usage housekeeping.
+
+### Fixed
+
+- **Screen didn't magnify in zoom mode (strokes only)** — the v0.2.3 switch of
+  the zoom background to Blob URLs was silently blocked by CSP
+  (`img-src` lacked `blob:`), leaving only the magnified strokes visible over
+  the real desktop. `blob:` is now allowed.
+- **Line width changed in Settings reverted / never applied** — two bugs in
+  combination: the overlay ignored preset fields from `config-changed`
+  broadcasts, and its exit-time prefs flush unconditionally wrote the stale
+  session values back over what Settings had just saved. Preset fields are now
+  diffed against a baseline (adopted live when Settings changes them), and the
+  overlay only persists when the user actually changed something in-session.
+- **Toolbar hard to read / can't move it out of the way quickly** — the
+  toolbar background is more opaque (0.82 → 0.90), and `Ctrl+=` / `Ctrl+-`
+  scale the whole toolbar between 60%–150% (persisted; also helps when it
+  covers content near the top edge).
+
+### Changed
+
+- **WebView2 disk footprint** — HTTP disk cache capped at 16 MB (the app makes
+  zero network requests), and the NSIS uninstaller now removes the WebView2
+  user-data folder (`%LOCALAPPDATA%\com.akimark.app`), which could grow to
+  hundreds of MB and was previously left behind on uninstall.
+
 ## [0.2.3] - 2026-09-13
 
 Architecture/i18n/release-engineering closeout.
@@ -296,6 +324,7 @@ annotation tool built with Tauri v2 + Vue 3.
 - CI pipeline (runs frontend checks and Windows backend build) and Node-20
   action deprecations.
 
+[0.2.4]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.0...v0.2.1
