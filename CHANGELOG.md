@@ -5,6 +5,44 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-09-13
+
+Architecture/i18n/release-engineering closeout.
+
+### Changed
+
+- **Overlay decomposed** — the mode-mutex rules (board / zoom / spotlight /
+  click-through / toolbar) that were smeared across six handlers now live in
+  `modeMutex.ts`, a pure function (`applyModeAction → { state, effects }`)
+  locked by 12 unit tests, executed by a new `useOverlayModes` composable.
+  Toast, text-editor, and prefs-sync logic moved into their own composables;
+  the overlay script shrank from ~1110 to ~770 lines with unchanged behavior
+  (53 → 63 tests green).
+- **Backend speaks English too** — user-facing `AppError` messages serialize
+  in the configured locale (`Display` stays Chinese for logs); the tray menu
+  and settings-window title rebuild on language save.
+- **Second launch opens Settings** instead of toggling annotation (a double
+  click on the icon most likely means "I want the config window"; the toggle
+  already has hotkeys and the tray).
+
+### Fixed
+
+- **Mosaic state is per-instance** — the module-level blur-base/composite
+  shared state moved into the composable closure, eliminating cross-instance
+  contamination (surfaced once tests ran under a DOM environment).
+- Global timer typing pollution from a transitive `@types/node` (fade timer
+  now uses `window.setInterval`).
+
+### Added
+
+- **Release pipeline** — pushing a `v*` tag builds the NSIS installer via
+  tauri-action and opens a draft GitHub Release; documented in CONTRIBUTING.
+- **Component tests** — @vue/test-utils + happy-dom: 7 ToolToolbar cases and
+  i18n behavior tests; per-file `@vitest-environment happy-dom` opt-in.
+- Tooling anchors: `.prettierrc.json`/`.prettierignore`, `.nvmrc` (CI reads
+  it), `.editorconfig`, `tsconfig.node.json` (vite/vitest configs
+  type-checked in `build:fe`), CONTRIBUTING/PR checklist synced with CI.
+
 ## [0.2.2] - 2026-09-13
 
 Stability/performance pass and the first batch of community-style feature gaps.
@@ -258,6 +296,7 @@ annotation tool built with Tauri v2 + Vue 3.
 - CI pipeline (runs frontend checks and Windows backend build) and Node-20
   action deprecations.
 
+[0.2.3]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/AkiroMusic/AkiMark/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AkiroMusic/AkiMark/compare/v0.1.0...v0.2.0
