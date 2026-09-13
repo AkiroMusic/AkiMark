@@ -65,6 +65,38 @@ function onToolbarMoved(pos: { x: number; y: number }) {
   }
 }
 
+/** 工具栏整体缩放（Ctrl+-/= 调整，0.6–1.5），localStorage 记忆，防遮挡顶部内容 */
+const TOOLBAR_SCALE_KEY = "akimark.toolbarScale";
+const TOOLBAR_SCALE_MIN = 0.6;
+const TOOLBAR_SCALE_MAX = 1.5;
+const toolbarScale = ref<number>(
+  (() => {
+    try {
+      const v = Number(localStorage.getItem(TOOLBAR_SCALE_KEY));
+      return v >= TOOLBAR_SCALE_MIN && v <= TOOLBAR_SCALE_MAX ? v : 1;
+    } catch {
+      return 1;
+    }
+  })(),
+);
+function adjustToolbarScale(delta: number) {
+  const next = Math.min(
+    TOOLBAR_SCALE_MAX,
+    Math.max(
+      TOOLBAR_SCALE_MIN,
+      Math.round((toolbarScale.value + delta) * 10) / 10,
+    ),
+  );
+  if (next === toolbarScale.value) return;
+  toolbarScale.value = next;
+  try {
+    localStorage.setItem(TOOLBAR_SCALE_KEY, String(next));
+  } catch {
+    // localStorage 不可用时静默降级为不记忆
+  }
+  showToast(`${Math.round(next * 100)}%`);
+}
+
 // ---- 光标 / 手势标志 ----
 const cursorPos = ref({ x: 0, y: 0 });
 const cursorVisible = ref(false);
@@ -434,6 +466,22 @@ function onKeyDown(e: KeyboardEvent) {
       if (meta && !e.repeat) {
         drawing.clearAll();
         showToast(t("action.clear"));
+      }
+      break;
+    case "-":
+    case "_":
+      // Ctrl+- = 工具栏缩小（防遮挡顶部内容）；允许 repeat 连续调节
+      if (meta) {
+        e.preventDefault();
+        adjustToolbarScale(-0.1);
+      }
+      break;
+    case "=":
+    case "+":
+      // Ctrl+=（Shift+= 为 +）= 工具栏放大
+      if (meta) {
+        e.preventDefault();
+        adjustToolbarScale(0.1);
       }
       break;
     case "y":
@@ -816,6 +864,7 @@ onBeforeUnmount(() => {
       :zoom="zoom > 0"
       :recent-colors="recentColors"
       :initial-position="toolbarPos"
+      :scale="toolbarScale"
       @select-tool="selectTool"
       @select-color="(c: string) => (drawing.currentColor.value = c)"
       @custom-color="addRecentColor"
