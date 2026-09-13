@@ -34,12 +34,15 @@ const TOOL_HOTKEY_MAP: Record<string, Tool> = Object.fromEntries(
 
 // 画布引用
 const historyCanvas = ref<HTMLCanvasElement | null>(null);
+const fadingCanvas = ref<HTMLCanvasElement | null>(null);
 const previewCanvas = ref<HTMLCanvasElement | null>(null);
 
 // 工具栏/状态
 const showToolbar = ref(false);
 const isPenetrating = ref(false);
 const toast = ref<{ text: string; ts: number } | null>(null);
+/** 初始化失败横幅：listeners/config 加载失败时显示（否则用户看到"窗口弹出但画不了"却无解释） */
+const initError = ref(false);
 
 // 文字工具：待提交的输入框（x/y 为屏幕 client 坐标；anchor 为打开时的缩放锚点）
 const textEditing = ref<{
@@ -64,6 +67,11 @@ const boardDefault = ref<"white" | "black">("white");
 // 屏幕缩放（冻结缩放，ZoomIt Ctrl+1 式）：0 = 关闭 / 2 / 4 / 6 / 8
 const zoom = ref(0);
 const zoomBg = ref<string | null>(null);
+/** 替换缩放底图并释放旧 Blob URL（base64 data URL 会让数十 MB 字符串常驻内存） */
+function setZoomBg(next: string | null) {
+  if (zoomBg.value) URL.revokeObjectURL(zoomBg.value);
+  zoomBg.value = next;
+}
 /** 本次笔画按下时刻的光标位置：捕获空间逆映射基准（笔画中途不随鼠标移动） */
 const zoomAnchor = ref<Point | null>(null);
 
@@ -87,6 +95,20 @@ const CURSOR_OFFSET: Record<string, [number, number]> = {
   fading: [-3.5, -20.5],
   blur: [-12, -12],
 };
+/** 模式切换类快捷键（见 onKeyDown 的 e.repeat 守卫）：板书/工具栏/穿透/聚光灯/缩放 */
+const MODE_TOGGLE_KEYS = [
+  "b",
+  "B",
+  " ",
+  "x",
+  "X",
+  "f",
+  "F",
+  "m",
+  "M",
+  "z",
+  "Z",
+];
 /** 橡皮实际擦除直径（CSS px）= 基础线宽 × WIDTH_SCALE.eraser */
 const eraserGuideSize = computed(() => drawing.lineWidth.value);
 /** 马赛克实际格子直径（CSS px）= 合成底图采样粒度，随线宽增长 */
@@ -119,6 +141,7 @@ const zoomOrigin = computed(() =>
 const drawing = useDrawing(
   {
     history: historyCanvas,
+    fading: fadingCanvas,
     preview: previewCanvas,
   },
   {},
@@ -432,12 +455,9 @@ function onKeyDown(e: KeyboardEvent) {
 
   // 模式切换类快捷键（板书/工具栏/穿透/聚光灯/缩放）带副作用（invoke/截屏/状态翻转），
   // 按住不放的 OS 自动重复会反复触发，统一忽略 repeat 事件。
-  // meta 组合（Ctrl+Z/Y/C）除外：按住连续撤销/重做是合法操作。
-  if (
-    e.repeat &&
-    !meta &&
-    ["b", "B", " ", "x", "X", "f", "F", "m", "M", "z", "Z"].includes(k)
-  ) {
+  // 与下方 switch 的模式分支共用同一常量，避免两处维护漂移。
+  // meta 组合（Ctrl+Z/Y/C/D）除外：按住连续撤销/重做是合法操作。
+  if (e.repeat && !meta && MODE_TOGGLE_KEYS.includes(k)) {
     return;
   }
   switch (k) {
@@ -577,6 +597,7 @@ async function togglePenetration() {
     console.warn("[akimark] toggle_penetration invoke failed", err);
     // 后端拒绝时回滚本地状态，避免 UI 与后端穿透状态不一致
     isPenetrating.value = !next;
+    showToast(t("action.penetrationFailed"));
   }
 }
 
@@ -634,7 +655,12 @@ async function toggleZoom() {
 
     try {
       const base64 = await invoke<string>("capture_screen");
-      zoomBg.value = `data:image/png;base64,${base64}`;
+      // base64 → Blob URL：data URL 会把整屏 PNG 的 base64 字符串常驻内存
+      //（4K/8K 下数十 MB），Blob URL 只持解码位图且可及时 revoke
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      setZoomBg(URL.createObjectURL(new Blob([bytes], { type: "image/png" })));
       zoom.value = ZOOM_LEVELS[0];
       showToast(t("action.zoom"));
     } catch (err) {
@@ -647,7 +673,7 @@ async function toggleZoom() {
   } else {
     // 关闭缩放：清空冻结底图与锚点，避免下次开启时残留旧画面
     zoom.value = 0;
-    zoomBg.value = null;
+    setZoomBg(null);
     zoomAnchor.value = null;
   }
 }
@@ -710,6 +736,8 @@ async function ensureBlurBase() {
     img.src = `data:image/png;base64,${base64}`;
     await img.decode();
     drawing.setBlurBase(img);
+    // 成功提示：首次点击只截屏不落笔，若无提示用户会以为"点了没反应"
+    showToast(t("action.blurReady"));
   } catch (err) {
     console.warn("[akimark] ensure_blur_base capture_screen failed", err);
     showToast(t("action.captureFailed"));
@@ -767,7 +795,12 @@ async function exportScreenshot() {
   const prevText = textEditing.value;
   try {
     const isBoard = boardMode.value !== "none";
-    const scale = window.devicePixelRatio;
+    // 导出位图同样受 MAX_CANVAS_PIXELS 约束：8K 屏按 devicePixelRatio 直乘
+    // 会同时创建 3 份全屏 canvas + base64，内存峰值无界
+    const maxExportScale = Math.sqrt(
+      9_000_000 / Math.max(1, window.innerWidth * window.innerHeight),
+    );
+    const scale = Math.min(window.devicePixelRatio, maxExportScale);
     const cssW = window.innerWidth;
     const cssH = window.innerHeight;
     const composite = document.createElement("canvas");
@@ -840,6 +873,7 @@ function resetOverlayState() {
   boardMode.value = "none";
   drawing.setBlurBaseColor(null);
   zoom.value = 0;
+  setZoomBg(null);
   zoomAnchor.value = null;
   spotlight.value = false;
   // 板书已退出：穿透恢复可用（后端同步）
@@ -943,6 +977,7 @@ onMounted(async () => {
     await setupListeners();
   } catch (err) {
     console.warn("[akimark] setup_listeners failed", err);
+    initError.value = true;
   }
 
   // 加载 config 应用默认工具/颜色/线宽
@@ -951,6 +986,7 @@ onMounted(async () => {
     applyConfig(cfg);
   } catch (err) {
     console.warn("[akimark] get_config failed", err);
+    initError.value = true;
   }
 
   // 若窗口已可见（例如启动即进入标注），立即初始化
@@ -1008,6 +1044,11 @@ onBeforeUnmount(() => {
     @pointerleave="onPointerLeave"
     @contextmenu.prevent
   >
+    <!-- 初始化失败横幅：listeners/config 加载失败时显示（热键仍能弹窗但功能不可用，必须有可见解释） -->
+    <div v-if="initError" class="init-error-banner">
+      {{ t("error.initFailed") }}
+    </div>
+
     <!-- 黑白板模式：纯色全屏底（z 轴最底，位于画布之下） -->
     <div v-if="boardMode !== 'none'" class="board-layer" :class="boardMode" />
 
@@ -1035,6 +1076,8 @@ onBeforeUnmount(() => {
       />
       <!-- 历史层：已提交笔画 -->
       <canvas ref="historyCanvas" class="layer-canvas" />
+      <!-- 渐隐层：渐隐笔画 + 橡皮擦除（独立层，渐隐动画只重绘本层） -->
+      <canvas ref="fadingCanvas" class="layer-canvas" />
       <!-- 预览层：进行中笔画 -->
       <canvas ref="previewCanvas" class="layer-canvas" />
     </div>
@@ -1365,6 +1408,22 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-full);
   font-size: 12px;
   color: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* ---- 初始化失败横幅 ---- */
+.init-error-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--toast-z);
+  padding: 10px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #ffd9d9;
+  background: rgba(140, 30, 30, 0.88);
+  backdrop-filter: blur(8px);
   pointer-events: none;
 }
 .toast-text {
