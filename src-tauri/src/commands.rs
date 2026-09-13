@@ -17,6 +17,7 @@ const KNOWN_TOOLS: &[&str] = &[
     "arrow",
     "text",
     "blur",
+    "counter",
 ];
 
 /// 线宽钳制到合理范围（stroke 1-40，highlighter 1-80，eraser 1-120）
@@ -166,6 +167,36 @@ pub fn save_export(
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// 把前端合成好的 PNG（base64）写入系统剪贴板（标注复制：贴进聊天/文档/PPT）。
+#[tauri::command(async)]
+pub fn copy_png_to_clipboard(app: AppHandle, png_base64: String) -> AppResult<()> {
+    use base64::Engine;
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    // 与 save_export 相同的上限：拦截异常/恶意超大 payload
+    const MAX_B64_LEN: usize = 50 * 1024 * 1024;
+    if png_base64.len() > MAX_B64_LEN {
+        return Err(AppError::ExportTooLarge(MAX_B64_LEN));
+    }
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png_base64)
+        .map_err(|_| AppError::InvalidExportData)?;
+    // PNG → RGBA 原始像素（剪贴板位图格式不收 PNG 字节流）
+    let img = image::load_from_memory(&bytes)
+        .map_err(|_| AppError::InvalidExportData)?
+        .to_rgba8();
+    let (width, height) = img.dimensions();
+    app.clipboard()
+        .write_image(&tauri::image::Image::new_owned(
+            img.into_raw(),
+            width,
+            height,
+        ))
+        .map_err(|e| AppError::Clipboard(e.to_string()))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>) -> AppConfig {
     state
@@ -191,7 +222,7 @@ pub fn save_general(
     Ok(())
 }
 
-/// 保存"上次使用的绘制预设"（工具/颜色/线宽），下次启动沿用。
+/// 保存"上次使用的绘制预设"（工具/颜色/线宽/最近自定义色），下次启动沿用。
 /// 由 overlay 在用户改动工具/颜色/线宽时（防抖后）调用。
 ///
 /// 不广播 config-changed：这是 overlay 自身的会话状态回存，
@@ -203,16 +234,34 @@ pub fn save_drawing_prefs(
     tool: String,
     color: String,
     mut line_widths: LineWidthsConfig,
+    recent_colors: Option<Vec<String>>,
 ) -> AppResult<()> {
     // 后端校验：工具必须在已知集合内，线宽钳制到合理范围
     if !KNOWN_TOOLS.contains(&tool.as_str()) {
         return Err(AppError::InvalidTool(tool));
     }
     clamp_line_widths(&mut line_widths);
+    // 最近自定义色：最多保留 4 个，单个长度钳制（防御异常 payload）
+    let recent_colors = match recent_colors {
+        Some(colors) => colors
+            .into_iter()
+            .filter(|c| !c.trim().is_empty())
+            .map(|c| c.chars().take(32).collect::<String>())
+            .take(4)
+            .collect::<Vec<String>>(),
+        None => state
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .general
+            .recent_colors
+            .clone(),
+    };
     let mut config = state.config.lock().unwrap_or_else(|e| e.into_inner());
     config.general.default_tool = tool;
     config.general.default_color = color;
     config.general.line_widths = line_widths;
+    config.general.recent_colors = recent_colors;
     let config_snapshot = config.clone();
     drop(config);
     config::save_config(&app, &config_snapshot)?;

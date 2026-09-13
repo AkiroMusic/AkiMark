@@ -73,6 +73,7 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .on_window_event(|window, event| {
             commands::handle_window_event(window, event);
             commands::handle_focus_event(window.app_handle(), event);
@@ -118,6 +119,7 @@ pub fn run() {
             commands::set_board_active,
             commands::capture_screen,
             commands::save_export,
+            commands::copy_png_to_clipboard,
             commands::open_settings,
             commands::set_autostart,
             commands::get_autostart,

@@ -206,6 +206,17 @@ export function useDrawing(
     return action.opacity;
   }
 
+  /** 序号工具下一个编号：当前历史中最大序号 + 1（撤销/清屏后自然重算） */
+  function nextCounterNumber(): string {
+    let max = 0;
+    for (const a of history.value) {
+      if (a.tool !== "counter") continue;
+      const n = Number.parseInt(a.text ?? "", 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    return String(max + 1);
+  }
+
   /** 渐隐笔画是否已过期（透明度衰减到 0，应从历史中消失） */
   function isExpired(a: DrawAction): boolean {
     return (
@@ -287,12 +298,16 @@ export function useDrawing(
     ctx.globalAlpha = actionOpacity(action);
     ctx.strokeStyle = action.color;
     ctx.lineWidth = action.lineWidth;
-    ctx.strokeRect(
-      Math.min(a.x, b.x),
-      Math.min(a.y, b.y),
-      Math.abs(b.x - a.x),
-      Math.abs(b.y - a.y),
-    );
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const w = Math.abs(b.x - a.x);
+    const h = Math.abs(b.y - a.y);
+    if (action.filled) {
+      // Shift 拖拽 = 填充（高亮区域）
+      ctx.fillStyle = action.color;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.strokeRect(x, y, w, h);
     ctx.restore();
   }
 
@@ -309,7 +324,36 @@ export function useDrawing(
     ctx.lineWidth = action.lineWidth;
     ctx.beginPath();
     ctx.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, rx, ry, 0, 0, Math.PI * 2);
+    if (action.filled) {
+      // Shift 拖拽 = 填充（高亮区域）
+      ctx.fillStyle = action.color;
+      ctx.fill();
+    }
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 序号标注：填充圆 + 白色序号（直径随线宽），点击自动递增 */
+  function drawCounter(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    const [p] = action.points;
+    if (!p) return;
+    const r = (24 + action.lineWidth * 2) / 2;
+    const num = action.text || "1";
+    ctx.save();
+    ctx.globalAlpha = actionOpacity(action);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = action.color;
+    ctx.fill();
+    // 白色描边 + 白色数字：深浅底色上都有对比
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 ${Math.round(r * 1.1)}px "Plus Jakarta Sans", system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(num, p.x, p.y);
     ctx.restore();
   }
 
@@ -556,6 +600,9 @@ export function useDrawing(
       case "blur":
         drawMosaicSegment(ctx, action);
         break;
+      case "counter":
+        drawCounter(ctx, action);
+        break;
       default:
         drawSmoothSegment(
           ctx,
@@ -714,6 +761,17 @@ export function useDrawing(
     if (currentTool.value === "fading") {
       currentAction.bornAt = Date.now();
     }
+    // 序号工具：分配下一个编号（撤销/清屏后按剩余最大序号重算）
+    if (currentTool.value === "counter") {
+      currentAction.text = nextCounterNumber();
+    }
+    // rect/circle + Shift 拖拽 = 填充
+    if (
+      (currentTool.value === "rect" || currentTool.value === "circle") &&
+      e.shiftKey
+    ) {
+      currentAction.filled = true;
+    }
     // 橡皮：快照当前历史层位图，拖动期间做增量擦除（见 eraserSnapshot）
     if (currentTool.value === "eraser") {
       takeEraserSnapshot();
@@ -738,6 +796,8 @@ export function useDrawing(
       scheduleRender();
       return;
     }
+    // 序号工具：点击即落笔，拖拽不改变位置
+    if (currentAction.tool === "counter") return;
     // 固定最小采样距离（CSS px²）：低于该距离的移动不产生新采样点。
     // 高频 pointermove 会产生大量亚像素位移，全部采样会让贝塞尔曲线抖动；
     // 0.5px² 阈值在平滑度与点密度之间取平衡（与视角面积无关的固定值）。

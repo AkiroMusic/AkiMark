@@ -26,12 +26,12 @@ const autostart = ref(false);
 const openSettingsOnStartup = ref(true);
 /** 界面语言（config.json 中的 locale，保存时原样回写） */
 const locale = ref("zh-CN");
-/** 主题（config.json 中的 theme，保存时原样回写） */
-const theme = ref("dark");
 /** 退出标注时是否保留笔迹（config.json 中的 preserveDrawings） */
 const preserveDrawings = ref(false);
 /** 导出目录；null = 系统图片目录 */
 const exportDir = ref<string | null>(null);
+/** 最近自定义色（设置表单不编辑，保存时透传，避免 save_general 清空） */
+const recentColors = ref<string[]>([]);
 
 const loading = ref(true);
 const saving = ref(false);
@@ -97,8 +97,8 @@ onMounted(async () => {
     exportDir.value = cfg.general.exportDir ?? null;
     // 常规设置表单回填：保存时原样回写，避免覆盖 config.json 中的值
     locale.value = cfg.general.locale;
-    theme.value = cfg.general.theme;
     preserveDrawings.value = cfg.general.preserveDrawings;
+    recentColors.value = cfg.general.recentColors ?? [];
     // 应用已保存的界面语言：否则本窗口始终跟随系统语言，
     // 配置 locale=en 时 overlay 英文而设置窗口中文（i18n 只对 overlay 生效）
     if (cfg.general.locale === "en" || cfg.general.locale === "zh-CN") {
@@ -144,7 +144,6 @@ watch(
     autostart,
     openSettingsOnStartup,
     locale,
-    theme,
     preserveDrawings,
     exportDir,
   ],
@@ -248,7 +247,8 @@ async function chooseExportDir() {
       exportDir.value = selected;
     }
   } catch (e) {
-    console.warn("[akimark] 选择导出目录失败:", e);
+    // 选择失败要可见：静默吞掉会让"点击无反应"
+    errorMsg.value = String(e);
   }
 }
 
@@ -262,16 +262,16 @@ async function save() {
   errorMsg.value = "";
   saving.value = true;
   try {
-    // 1. 常规设置（含 locale/theme/preserveDrawings 表单实际值）
+    // 1. 常规设置（含 locale/preserveDrawings 表单实际值 + recentColors 透传）
     await invoke("save_general", {
       general: buildGeneralPayload({
         locale: locale.value,
-        theme: theme.value,
         preserveDrawings: preserveDrawings.value,
         lineWidths: { ...lineWidths },
         defaultTool: defaultTool.value,
         defaultColor: defaultColor.value,
         boardDefault: boardDefault.value,
+        recentColors: recentColors.value,
         openSettingsOnStartup: openSettingsOnStartup.value,
         exportDir: exportDir.value,
       }),
@@ -329,6 +329,42 @@ async function save() {
           <span v-if="recordingKey === item.key" class="recording-dot"></span>
         </div>
         <p class="section-hint">{{ t("settings.recordHint") }}</p>
+      </section>
+
+      <!-- 通用：界面语言 + 保留笔迹 -->
+      <section class="section double-bezel">
+        <div class="switch-row">
+          <div>
+            <h2 class="section-title mb0">{{ t("settings.language") }}</h2>
+          </div>
+          <select
+            v-model="locale"
+            class="lang-select"
+            @change="setLocale(locale as 'en' | 'zh-CN')"
+          >
+            <option value="zh-CN">简体中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="switch-row">
+          <div>
+            <h2 class="section-title mb0">
+              {{ t("settings.preserveDrawings") }}
+            </h2>
+            <p class="section-hint mb0">
+              {{ t("settings.preserveDrawingsDesc") }}
+            </p>
+          </div>
+          <button
+            class="switch"
+            :class="{ on: preserveDrawings }"
+            role="switch"
+            :aria-checked="preserveDrawings"
+            @click="preserveDrawings = !preserveDrawings"
+          >
+            <span class="switch-knob"></span>
+          </button>
+        </div>
       </section>
 
       <!-- 自启动 -->
@@ -489,16 +525,19 @@ async function save() {
         <h2 class="section-title">{{ t("settings.helpTitle") }}</h2>
 
         <h3 class="help-sub">{{ t("settings.helpGlobal") }}</h3>
+        <!-- 快捷键展示读取表单当前值：用户重绑定后帮助文案不再过时 -->
         <div class="help-row">
-          <kbd class="help-kbd font-mono">Ctrl+Shift+R</kbd>
+          <kbd class="help-kbd font-mono">{{ shortcuts.toggleDrawing }}</kbd>
           <span class="help-desc">{{ t("settings.helpGlobalToggle") }}</span>
         </div>
         <div class="help-row">
-          <kbd class="help-kbd font-mono">Ctrl+Shift+C</kbd>
+          <kbd class="help-kbd font-mono">{{ shortcuts.clearDrawing }}</kbd>
           <span class="help-desc">{{ t("settings.helpGlobalClear") }}</span>
         </div>
         <div class="help-row">
-          <kbd class="help-kbd font-mono">Ctrl+Shift+X</kbd>
+          <kbd class="help-kbd font-mono">{{
+            shortcuts.togglePenetration
+          }}</kbd>
           <span class="help-desc">{{ t("settings.helpGlobalPenetrate") }}</span>
         </div>
 
@@ -538,6 +577,10 @@ async function save() {
         <div class="help-row">
           <kbd class="help-kbd font-mono">Ctrl+C</kbd>
           <span class="help-desc">{{ t("settings.helpInCtrlC") }}</span>
+        </div>
+        <div class="help-row">
+          <kbd class="help-kbd font-mono">Ctrl+D</kbd>
+          <span class="help-desc">{{ t("settings.helpInCtrlD") }}</span>
         </div>
         <div class="help-row">
           <kbd class="help-kbd font-mono">Ctrl+Z / Ctrl+Y</kbd>
@@ -746,6 +789,19 @@ async function save() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+}
+.lang-select {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.lang-select option {
+  color: #1a1d26;
 }
 .switch {
   position: relative;

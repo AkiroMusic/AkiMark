@@ -43,6 +43,37 @@ const isPenetrating = ref(false);
 const toast = ref<{ text: string; ts: number } | null>(null);
 /** 初始化失败横幅：listeners/config 加载失败时显示（否则用户看到"窗口弹出但画不了"却无解释） */
 const initError = ref(false);
+/** 最近使用的自定义颜色（取色器加入，随绘制预设持久化） */
+const recentColors = ref<string[]>([]);
+/** 工具栏位置（纯 UI 状态，localStorage 记忆；不放 config 避免污染用户配置文件） */
+const TOOLBAR_POS_KEY = "akimark.toolbarPos";
+const toolbarPos = ref<{ x: number; y: number } | null>(
+  (() => {
+    try {
+      const raw = localStorage.getItem(TOOLBAR_POS_KEY);
+      return raw ? (JSON.parse(raw) as { x: number; y: number }) : null;
+    } catch {
+      return null;
+    }
+  })(),
+);
+function onToolbarMoved(pos: { x: number; y: number }) {
+  toolbarPos.value = pos;
+  try {
+    localStorage.setItem(TOOLBAR_POS_KEY, JSON.stringify(pos));
+  } catch {
+    // localStorage 不可用时静默降级为不记忆
+  }
+}
+/** 取色器选定自定义色：去重后置顶，最多保留 4 个，并随预设落盘 */
+function addRecentColor(color: string) {
+  const next = [color, ...recentColors.value.filter((c) => c !== color)].slice(
+    0,
+    4,
+  );
+  recentColors.value = next;
+  schedulePrefsSave();
+}
 
 // 文字工具：待提交的输入框（x/y 为屏幕 client 坐标；anchor 为打开时的缩放锚点）
 const textEditing = ref<{
@@ -94,6 +125,7 @@ const CURSOR_OFFSET: Record<string, [number, number]> = {
   text: [-12, -12],
   fading: [-3.5, -20.5],
   blur: [-12, -12],
+  counter: [-12, -12],
 };
 /** 模式切换类快捷键（见 onKeyDown 的 e.repeat 守卫）：板书/工具栏/穿透/聚光灯/缩放 */
 const MODE_TOGGLE_KEYS = [
@@ -162,6 +194,7 @@ function applyConfig(cfg: AppConfig) {
   applyingConfig = true;
   drawing.currentTool.value = cfg.general.defaultTool;
   drawing.currentColor.value = cfg.general.defaultColor;
+  recentColors.value = cfg.general.recentColors ?? [];
   drawing.lineWidths.value = {
     stroke: cfg.general.lineWidths.stroke,
     highlighter: cfg.general.lineWidths.highlighter,
@@ -228,6 +261,7 @@ async function persistDrawingPrefs() {
         highlighter: drawing.lineWidths.value.highlighter,
         eraser: drawing.lineWidths.value.eraser,
       },
+      recentColors: recentColors.value,
     });
   } catch (err) {
     console.warn("[akimark] save_drawing_prefs failed", err);
@@ -520,7 +554,14 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "c":
     case "C":
-      if (meta) {
+      // Ctrl+C = 复制标注（与全系统"复制"心智一致；清屏改 Ctrl+D）。
+      // 忽略 repeat：按住会反复触发"隐藏 UI → 截屏 → 写剪贴板"
+      if (meta && !e.repeat) void copyAnnotation();
+      break;
+    case "d":
+    case "D":
+      // Ctrl+D = 清屏（原 Ctrl+C，让位给复制）
+      if (meta && !e.repeat) {
         drawing.clearAll();
         showToast(t("action.clear"));
       }
@@ -607,6 +648,10 @@ async function togglePenetration() {
  * 因此按空格时显式退出穿透并显示工具栏，保证工具栏可见可点，行为最不意外。
  */
 function toggleToolbarWithSpace() {
+  // 焦点在工具栏按钮上时先释放：避免按钮原生 Space 激活抢占。
+  // （不在每次点击后强制 blur——那会破坏键盘导航；只在 Space 按下时处理）
+  const active = document.activeElement as HTMLElement | null;
+  if (active?.closest("[data-toolbar]")) active.blur();
   if (isPenetrating.value) {
     isPenetrating.value = false;
     void invoke("exit_penetration_mode").catch((err) => {
@@ -789,6 +834,45 @@ async function exportScreenshot() {
   exportInFlight = true;
   uiLocked = true;
   showToast(t("action.exporting"));
+  try {
+    const composite = await composeExportCanvas();
+    // 交给后端保存到图片目录；提示完整保存路径（完整路径需更久展示）
+    const png = composite.toDataURL("image/png").split(",")[1];
+    const savedPath = await invoke<string>("save_export", { pngBase64: png });
+    showToast(`${t("action.exported")} ${savedPath}`, TOAST_EXPORT_MS);
+  } catch (err) {
+    console.warn("[akimark] export_screenshot failed", err);
+    showToast(t("action.exportFailed"));
+  } finally {
+    uiLocked = false;
+    exportInFlight = false;
+  }
+}
+
+/** 复制标注到剪贴板（PNG）：Ctrl+C 或工具栏复制按钮，复用导出合成管线 */
+async function copyAnnotation() {
+  if (exportInFlight) return;
+  exportInFlight = true;
+  uiLocked = true;
+  try {
+    const composite = await composeExportCanvas();
+    const png = composite.toDataURL("image/png").split(",")[1];
+    await invoke("copy_png_to_clipboard", { pngBase64: png });
+    showToast(t("action.copied"));
+  } catch (err) {
+    console.warn("[akimark] copy_annotation failed", err);
+    showToast(t("action.copyFailed"));
+  } finally {
+    uiLocked = false;
+    exportInFlight = false;
+  }
+}
+
+/**
+ * 合成"底图 + 已提交标注"为导出画布（导出保存与剪贴板复制共用）。
+ * 内部临时隐藏 UI（工具栏/聚光灯/文字框）再请求后端截屏，结束必恢复。
+ */
+async function composeExportCanvas(): Promise<HTMLCanvasElement> {
   // 临时隐藏的 UI 状态：无论成功失败都要恢复（finally 兜底，避免截屏失败后工具栏/聚光灯/文字框永久消失）
   const prevToolbar = showToolbar.value;
   const prevSpotlight = spotlight.value;
@@ -826,7 +910,7 @@ async function exportScreenshot() {
 
       const base64 = await invoke<string>("capture_screen");
 
-      // 3. 合成：底图 + 已提交笔画
+      // 2. 合成：底图 + 已提交笔画
       const img = new Image();
       img.src = `data:image/png;base64,${base64}`;
       await img.decode();
@@ -842,21 +926,12 @@ async function exportScreenshot() {
     // base 传入导出用新截屏，保证马赛克导出时用最新画面
     drawing.renderTo(drawLayer, cssW, cssH, scale, baseImg);
     ctx.drawImage(drawLayer, 0, 0);
-
-    // 4. 交给后端保存到图片目录；提示完整保存路径（完整路径需更久展示）
-    const png = composite.toDataURL("image/png").split(",")[1];
-    const savedPath = await invoke<string>("save_export", { pngBase64: png });
-    showToast(`${t("action.exported")} ${savedPath}`, TOAST_EXPORT_MS);
-  } catch (err) {
-    console.warn("[akimark] export_screenshot failed", err);
-    showToast(t("action.exportFailed"));
+    return composite;
   } finally {
-    // 2. 恢复 UI（无论成功失败）
+    // 恢复 UI（无论成功失败）
     showToolbar.value = prevToolbar;
     spotlight.value = prevSpotlight;
     textEditing.value = prevText;
-    uiLocked = false;
-    exportInFlight = false;
   }
 }
 
@@ -1095,8 +1170,12 @@ onBeforeUnmount(() => {
       :spotlight="spotlight"
       :board="boardMode"
       :zoom="zoom > 0"
+      :recent-colors="recentColors"
+      :initial-position="toolbarPos"
       @select-tool="selectTool"
       @select-color="(c: string) => (drawing.currentColor.value = c)"
+      @custom-color="addRecentColor"
+      @toolbar-moved="onToolbarMoved"
       @update-width="
         (w: Record<string, number>) =>
           (drawing.lineWidths.value = { ...drawing.lineWidths.value, ...w })
@@ -1106,6 +1185,7 @@ onBeforeUnmount(() => {
       @clear="drawing.clearAll()"
       @penetrate="togglePenetration"
       @export="exportScreenshot"
+      @copy="copyAnnotation"
       @toggle-spotlight="toggleSpotlight"
       @toggle-board="cycleBoard"
       @toggle-zoom="toggleZoom"

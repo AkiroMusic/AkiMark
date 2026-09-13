@@ -23,6 +23,8 @@ export const TOOL_DEFS: ToolDef[] = [
   { id: "arrow", label: "tool.arrow", hotkey: "8" },
   { id: "text", label: "tool.text", hotkey: "9" },
   { id: "blur", label: "tool.blur", hotkey: "0" },
+  // 序号工具：无数字热键（0-9 已占满），仅工具栏入口；点击自动递增序号
+  { id: "counter", label: "tool.counter", hotkey: "" },
 ];
 
 /** 线宽分组（工具栏调宽度用） */
@@ -53,6 +55,7 @@ export const WIDTH_SCALE: Record<Tool, number> = {
   text: 1,
   fading: 1,
   blur: 1,
+  counter: 1,
 };
 
 /** 荧光笔透明度 */
@@ -86,6 +89,7 @@ export const TOOL_WIDTH_GROUP: Record<
   text: "stroke",
   fading: "stroke",
   blur: "stroke",
+  counter: "stroke",
 };
 
 /** 屏幕缩放倍率档位（滚轮循环切换） */

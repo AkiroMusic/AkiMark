@@ -36,6 +36,9 @@ pub enum AppError {
     /// 同一集合内重复的快捷键绑定
     #[error("重复的快捷键: {0}")]
     DuplicateShortcut(String),
+    /// 剪贴板写入失败（插件错误）
+    #[error("写入剪贴板失败: {0}")]
+    Clipboard(String),
 }
 
 pub type AppResult<T> = Result<T, AppError>;
