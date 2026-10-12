@@ -57,11 +57,13 @@
   --shadow-accent:
     0 0 0 1px rgba(108, 140, 255, 0.25), 0 4px 20px rgba(108, 140, 255, 0.18);
 
-  /* ---- Glass morphism ---- */
-  --glass-bg: rgba(23, 26, 35, 0.62);
-  --glass-bg-strong: rgba(23, 26, 35, 0.82);
+  /* ---- Glass morphism ----
+     毛玻璃只保留半透明底色，不再用 backdrop-filter：全屏透明窗口下每帧
+     对背后内容做实时模糊是持续的大额合成开销（v0.2.6 性能修复），
+     靠提高底色不透明度补偿可读性。 */
+  --glass-bg: rgba(23, 26, 35, 0.72);
+  --glass-bg-strong: rgba(23, 26, 35, 0.92);
   --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-blur: 20px;
 
   /* ---- Border Radius ---- */
   --radius-sm: 10px;
@@ -126,8 +128,6 @@ body {
 /* ---- 毛玻璃表面 ---- */
 .glass-surface {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
 }
 
@@ -135,8 +135,6 @@ body {
 .double-bezel {
   position: relative;
   background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow:
