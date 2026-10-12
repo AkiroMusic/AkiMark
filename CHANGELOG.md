@@ -5,6 +5,40 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-10-12
+
+Performance release: eliminates the chronic frame drops during annotation.
+
+### Fixed
+
+- **GPU compositing restored** — the `--disable-gpu-compositing` flag (added in
+  v0.2.0 to stop WebView2 video overlays from capturing as black) forced full
+  CPU software compositing, multiplying the cost of the full-screen transparent
+  window × 3 canvases × spotlight gradient × glass surfaces. Replaced with the
+  targeted `--disable-direct-composition-video-overlays`: video still renders
+  through a capturable path, everything else gets GPU compositing back.
+- **Pointer-move no longer re-renders the app** — cursor position was a Vue ref
+  feeding five template bindings (custom cursor, spotlight hole, zoom ring,
+  zoom origin), so every `pointermove` patched the whole overlay component.
+  Cursor-following visuals are now written directly to element styles from a
+  single rAF; pointer movement does zero Vue work.
+- **Spotlight uses a compositor-friendly cutout** — the per-frame full-screen
+  radial-gradient repaint is replaced by a small ring element with a solid
+  `box-shadow` fill, moved via `transform` (no repaint while following the
+  cursor). Visuals (darkness, feather band, wheel-adjustable radius) unchanged.
+- **Zoom origin no longer animates** — the `transform-origin 0.05s` transition
+  forced style churn every frame while the origin followed the cursor; the
+  origin is now written directly and the transition removed.
+- **Long strokes are O(n), not O(n²)** — eraser drag (used to restore a
+  full-layer snapshot per move), mosaic preview (up to 5000 `drawImage` calls
+  per frame) and pen preview (full-path re-stroke per frame) now draw only the
+  newly added segments/blocks. Results are pixel-identical (idempotent
+  compositing), locked by 5 new unit tests (67 → 72).
+- **`backdrop-filter` removed** from glass surfaces (toolbar, toast, settings
+  cards, error banner) — real-time blur behind a full-screen transparent window
+  is a standing compositing tax; readability is kept by slightly more opaque
+  backgrounds (0.62 → 0.72, 0.82 → 0.92).
+
 ## [0.2.5] - 2026-09-13
 
 ### Changed
