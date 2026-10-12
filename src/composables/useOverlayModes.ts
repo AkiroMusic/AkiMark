@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import type { Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -35,7 +35,6 @@ export function useOverlayModes(deps: {
   boardDefault: Ref<"white" | "black">;
   /** 缩放视觉原点在笔画进行中锁定为冻结锚点（与逆映射同源） */
   strokeActive: Ref<boolean>;
-  cursorPos: Ref<{ x: number; y: number }>;
 }) {
   const showToolbar = ref(false);
   const isPenetrating = ref(false);
@@ -53,13 +52,6 @@ export function useOverlayModes(deps: {
     if (zoomBg.value) URL.revokeObjectURL(zoomBg.value);
     zoomBg.value = next;
   }
-
-  /** 缩放视觉原点：与 mapToCapture 的逆映射锚点同源，否则笔画偏移 (1-z)×(光标-锚点) */
-  const zoomOrigin = computed(() =>
-    deps.strokeActive.value && zoomAnchor.value
-      ? zoomAnchor.value
-      : deps.cursorPos.value,
-  );
 
   function snapshot(): ModeState {
     return {
@@ -253,8 +245,6 @@ export function useOverlayModes(deps: {
     zoom,
     zoomBg,
     zoomAnchor,
-    zoomOrigin,
-    setZoomBg,
     // 动作（组件层快捷键/工具栏直接调用）
     toggleZoom: () => dispatch({ type: "toggleZoom" }),
     toggleSpotlight: () => void dispatch({ type: "toggleSpotlight" }),

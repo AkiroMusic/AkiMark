@@ -98,10 +98,38 @@ function adjustToolbarScale(delta: number) {
 }
 
 // ---- 光标 / 手势标志 ----
-const cursorPos = ref({ x: 0, y: 0 });
+// 光标跟随类视觉（自定义光标/聚光灯孔/缩放环/缩放原点）不走 Vue 响应式：
+// pointermove 高频路径若写入 ref，会让整个组件每帧全量 patch 重渲染。
+// 改为普通对象 + rAF 节流的 DOM 直写（syncCursorDom），空闲时零渲染开销。
+const cursor = { x: 0, y: 0 };
+/** 光标可见性：只在进出窗口/手势时变化，保留响应式驱动 v-show */
 const cursorVisible = ref(false);
 /** 绘制手势进行中（pointerDown/rmbErasing 的响应式镜像）：缩放视觉原点据此锁定锚点 */
 const strokeActive = ref(false);
+
+// ---- 光标 DOM 直写（模板 ref）----
+const cursorPenEl = ref<HTMLElement | null>(null);
+const cursorEraserEl = ref<HTMLElement | null>(null);
+const cursorBlurEl = ref<HTMLElement | null>(null);
+const spotlightEl = ref<HTMLElement | null>(null);
+const zoomRingEl = ref<HTMLElement | null>(null);
+const zoomLayerEl = ref<HTMLElement | null>(null);
+
+/** 光标渲染偏移：让 SVG 中"起作用的位置"对准鼠标。
+ * - pen/fading：笔尖在 viewBox 左下角（约 3.5, 20.5）→ 左移 3.5px、上移 20.5px
+ * - 其余工具：图形居中 → 左移/上移 12px */
+const CURSOR_OFFSET: Record<string, [number, number]> = {
+  pen: [-3.5, -20.5],
+  highlighter: [-12, -12],
+  line: [-12, -12],
+  rect: [-12, -12],
+  circle: [-12, -12],
+  arrow: [-12, -12],
+  text: [-12, -12],
+  fading: [-3.5, -20.5],
+  blur: [-12, -12],
+  counter: [-12, -12],
+};
 
 // ---- 默认板书底色（配置项，prefsSync 写入 / modes 读取） ----
 const boardDefault = ref<"white" | "black">("white");
@@ -165,7 +193,6 @@ const modes = useOverlayModes({
   textEditing,
   boardDefault,
   strokeActive,
-  cursorPos,
 });
 const {
   showToolbar,
@@ -176,7 +203,6 @@ const {
   zoom,
   zoomBg,
   zoomAnchor,
-  zoomOrigin,
   toggleZoom,
   toggleSpotlight,
   cycleBoard,
@@ -190,23 +216,6 @@ const {
   dispose: disposeModes,
 } = modes;
 
-/**
- * 光标渲染偏移：让 SVG 中"起作用的位置"对准鼠标。
- * - pen/fading：笔尖在 viewBox 左下角（约 3.5, 20.5）→ 左移 3.5px、上移 20.5px
- * - 其余工具：图形居中 → 左移/上移 12px
- */
-const CURSOR_OFFSET: Record<string, [number, number]> = {
-  pen: [-3.5, -20.5],
-  highlighter: [-12, -12],
-  line: [-12, -12],
-  rect: [-12, -12],
-  circle: [-12, -12],
-  arrow: [-12, -12],
-  text: [-12, -12],
-  fading: [-3.5, -20.5],
-  blur: [-12, -12],
-  counter: [-12, -12],
-};
 /** 模式切换类快捷键（见 onKeyDown 的 e.repeat 守卫）：板书/工具栏/穿透/聚光灯/缩放 */
 const MODE_TOGGLE_KEYS = [
   "b",
@@ -225,16 +234,75 @@ const MODE_TOGGLE_KEYS = [
 const eraserGuideSize = computed(() => drawing.lineWidth.value);
 /** 马赛克实际格子直径（CSS px）= 合成底图采样粒度，随线宽增长 */
 const blurGuideSize = computed(() => drawing.blurCell.value);
-function cursorTransform(): string {
-  const tool = drawing.currentTool.value;
-  if (tool === "eraser" || tool === "blur") {
-    // 橡皮/马赛克：以鼠标为圆心的圆形引导，直径 = 实际作用宽度
-    const s = tool === "blur" ? blurGuideSize.value : eraserGuideSize.value;
-    return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${-s / 2}px, ${-s / 2}px)`;
-  }
-  const [dx, dy] = CURSOR_OFFSET[tool] ?? [-12, -12];
-  return `translate(${cursorPos.value.x}px, ${cursorPos.value.y}px) translate(${dx}px, ${dy}px)`;
+
+/**
+ * 光标跟随 DOM 直写：把光标位置/缩放原点写进 style，绕过 Vue 响应式。
+ * 由 requestCursorSync 经 rAF 调度（每帧最多一次）；元素 v-if 未挂载时跳过。
+ */
+let cursorSyncQueued = false;
+function requestCursorSync() {
+  if (cursorSyncQueued) return;
+  cursorSyncQueued = true;
+  requestAnimationFrame(() => {
+    cursorSyncQueued = false;
+    syncCursorDom();
+  });
 }
+
+function syncCursorDom() {
+  const { x, y } = cursor;
+  const tool = drawing.currentTool.value;
+  const activeEl =
+    tool === "eraser"
+      ? cursorEraserEl.value
+      : tool === "blur"
+        ? cursorBlurEl.value
+        : cursorPenEl.value;
+  if (activeEl) {
+    let transform: string;
+    if (tool === "eraser" || tool === "blur") {
+      // 橡皮/马赛克：以鼠标为圆心的圆形引导，直径 = 实际作用宽度
+      const s = tool === "blur" ? blurGuideSize.value : eraserGuideSize.value;
+      transform = `translate(${x}px, ${y}px) translate(${-s / 2}px, ${-s / 2}px)`;
+    } else {
+      const [dx, dy] = CURSOR_OFFSET[tool] ?? [-12, -12];
+      transform = `translate(${x}px, ${y}px) translate(${dx}px, ${dy}px)`;
+    }
+    activeEl.style.transform = transform;
+  }
+
+  if (spotlightEl.value) {
+    // 聚光灯孔：本体居中定位 + 半径由响应式绑定驱动，这里只跟位置
+    spotlightEl.value.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+  }
+
+  if (zoomRingEl.value) {
+    zoomRingEl.value.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+  }
+
+  if (zoomLayerEl.value && zoom.value > 0) {
+    // 缩放视觉原点：与 mapToCapture 的逆映射锚点同源，否则笔画偏移
+    // (1-z)×(光标-锚点)。笔画进行中锁定按下时刻的冻结锚点，空闲跟随光标。
+    const origin =
+      strokeActive.value && zoomAnchor.value ? zoomAnchor.value : cursor;
+    zoomLayerEl.value.style.transformOrigin = `${origin.x}px ${origin.y}px`;
+  }
+}
+
+// 工具/半径切换改变光标几何（尺寸/显示的元素），需要下一帧重新定位；
+// 纯位置变化只发生在 pointermove，直接调用 requestCursorSync。
+watch(drawing.currentTool, () => requestCursorSync());
+watch(spotlightRadius, () => requestCursorSync());
+watch(strokeActive, () => requestCursorSync());
+watch(cursorVisible, (visible) => {
+  if (visible) requestCursorSync();
+});
+watch(spotlight, (on) => {
+  if (on) requestCursorSync();
+});
+watch(zoom, (z) => {
+  if (z > 0) requestCursorSync();
+});
 
 // ---- 进行中标志 ----
 let pointerDown = false;
@@ -336,7 +404,9 @@ function endPointerInteraction() {
 }
 
 function onPointerMove(e: PointerEvent) {
-  cursorPos.value = { x: e.clientX, y: e.clientY };
+  cursor.x = e.clientX;
+  cursor.y = e.clientY;
+  requestCursorSync();
   if (pointerDown || rmbErasing) {
     drawing.drawTo(e);
   }
@@ -820,17 +890,11 @@ onBeforeUnmount(() => {
     <div v-if="boardMode !== 'none'" class="board-layer" :class="boardMode" />
 
     <!-- 缩放 / 普通布局：wrapper 恒存在，zoom>0 时整体放大（截图底图 + 双画布同一变换，笔画与画面视觉对齐）；
-         视觉原点用 zoomOrigin：笔画进行中锁定为冻结锚点（与 mapToCapture 同源），空闲时跟随光标 -->
+         视觉原点由 syncCursorDom 直写（笔画进行中锁定冻结锚点，空闲跟随光标） -->
     <div
+      ref="zoomLayerEl"
       class="zoom-layer"
-      :style="
-        zoom > 0
-          ? {
-              transform: `scale(${zoom})`,
-              transformOrigin: `${zoomOrigin.x}px ${zoomOrigin.y}px`,
-            }
-          : undefined
-      "
+      :style="zoom > 0 ? { transform: `scale(${zoom})` } : undefined"
     >
       <!-- 缩放底图：冻结的屏幕截图（1:1 铺满，随 wrapper 放大） -->
       <div
@@ -900,21 +964,23 @@ onBeforeUnmount(() => {
       @blur="onTextBlur"
     />
 
-    <!-- 聚光灯遮罩：光标处圆孔（半径可滚轮调节） -->
+    <!-- 聚光灯遮罩：光标处圆孔（半径可滚轮调节）。
+         实现为中心 ring + box-shadow 补全屏暗幕：位置移动只改 transform（无重绘），
+         渐变/羽化与旧版全屏 radial-gradient 视觉一致（羽化带宽 gradientInner+gradientOuter）。 -->
     <div
       v-if="spotlight"
+      ref="spotlightEl"
       class="spotlight-mask"
       :style="{
-        background: `radial-gradient(circle ${spotlightRadius}px at ${cursorPos.x}px ${cursorPos.y}px, transparent 0, transparent ${spotlightRadius - SPOTLIGHT.gradientInner}px, rgba(3, 5, 10, 0.72) ${spotlightRadius + SPOTLIGHT.gradientOuter}px)`,
+        width: `${(spotlightRadius + SPOTLIGHT.gradientOuter) * 2}px`,
+        height: `${(spotlightRadius + SPOTLIGHT.gradientOuter) * 2}px`,
+        background: `radial-gradient(closest-side, transparent calc(100% - ${SPOTLIGHT.gradientInner + SPOTLIGHT.gradientOuter}px), rgba(3, 5, 10, 0.72) 100%)`,
+        boxShadow: `0 0 0 9999px rgba(3, 5, 10, 0.72)`,
       }"
     />
 
-    <!-- 缩放聚焦环：提示当前放大中心 -->
-    <div
-      v-if="zoom > 0"
-      class="zoom-ring"
-      :style="{ left: cursorPos.x + 'px', top: cursorPos.y + 'px' }"
-    />
+    <!-- 缩放聚焦环：提示当前放大中心（位置由 syncCursorDom 直写） -->
+    <div v-if="zoom > 0" ref="zoomRingEl" class="zoom-ring" />
 
     <!-- 提示 Toast -->
     <Transition name="fade">
@@ -923,13 +989,13 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
-    <!-- 自定义光标（隐藏系统光标） -->
+    <!-- 自定义光标（隐藏系统光标）：位置/几何由 syncCursorDom 直写 -->
     <!-- 橡皮：虚线圆 = 实际擦除范围（直径随线宽变化），半透明填充便于定位 -->
     <div
       v-if="drawing.currentTool.value === 'eraser'"
+      ref="cursorEraserEl"
       v-show="cursorVisible"
       class="custom-cursor eraser-cursor"
-      :style="{ transform: cursorTransform() }"
     >
       <div
         class="eraser-guide"
@@ -942,9 +1008,9 @@ onBeforeUnmount(() => {
     <!-- 马赛克笔：实线白圆 + 外黑描边 = 实际格子大小（与橡皮虚线区分） -->
     <div
       v-else-if="drawing.currentTool.value === 'blur'"
+      ref="cursorBlurEl"
       v-show="cursorVisible"
       class="custom-cursor blur-cursor"
-      :style="{ transform: cursorTransform() }"
     >
       <div
         class="blur-guide"
@@ -957,13 +1023,11 @@ onBeforeUnmount(() => {
     <!-- 其他工具：SVG 图标光标 -->
     <div
       v-else
+      ref="cursorPenEl"
       v-show="cursorVisible"
       class="custom-cursor"
       :class="`cursor-${drawing.currentTool.value}`"
-      :style="{
-        transform: cursorTransform(),
-        color: drawing.currentColor.value,
-      }"
+      :style="{ color: drawing.currentColor.value }"
     >
       <svg
         viewBox="0 0 24 24"
@@ -1059,10 +1123,8 @@ onBeforeUnmount(() => {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  will-change: transform, transform-origin;
-  transition:
-    transform var(--duration-hover) var(--ease-default),
-    transform-origin 0.05s linear;
+  will-change: transform;
+  transition: transform var(--duration-hover) var(--ease-default);
 }
 .zoom-bg {
   position: absolute;
@@ -1091,20 +1153,25 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-float);
 }
 
-/* ---- 聚光灯遮罩 ---- */
+/* ---- 聚光灯遮罩：中心 ring（渐变羽化）+ box-shadow 补全屏暗幕；
+        位置由 syncCursorDom 直写 translate + 独立合成层，移动零重绘 ---- */
 .spotlight-mask {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-full);
   pointer-events: none;
   z-index: calc(var(--toolbar-z) - 1);
+  will-change: transform;
 }
 
-/* ---- 缩放聚焦环 ---- */
+/* ---- 缩放聚焦环（位置由 syncCursorDom 直写 translate） ---- */
 .zoom-ring {
   position: fixed;
+  top: 0;
+  left: 0;
   width: 28px;
   height: 28px;
-  margin: -14px 0 0 -14px;
   border: 1.5px solid rgba(255, 255, 255, 0.65);
   border-radius: var(--radius-full);
   box-shadow:
@@ -1195,8 +1262,7 @@ onBeforeUnmount(() => {
   text-align: center;
   font-size: 13px;
   color: #ffd9d9;
-  background: rgba(140, 30, 30, 0.88);
-  backdrop-filter: blur(8px);
+  background: rgba(140, 30, 30, 0.94);
   pointer-events: none;
 }
 .toast-text {
