@@ -88,8 +88,13 @@ pub fn open_settings(app: &AppHandle) {
     // 默认的 --disable-features（SmartScreen/OLE UI 等）。
     // --disk-cache-size=16MB：应用零网络请求，HTTP 缓存纯属磁盘浪费
     //（托盘常驻数周可膨胀到数百 MB，卸载残留问题的一半来源）。
+    // --disable-direct-composition-video-overlays：视频走软件路径渲染，
+    // GDI 截屏（capture_screen）才能拿到视频画面（硬件 overlay 平面截不到，
+    // 表现为标注/缩放/导出里视频区域全黑）。只禁视频 overlay 平面、保留
+    // GPU 合成——整体 --disable-gpu-compositing 会退化为全 CPU 软件合成，
+    // 全屏画布场景掉帧严重（v0.2.6 修复）。
     .additional_browser_args(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing --disk-cache-size=16777216",
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-direct-composition-video-overlays --disk-cache-size=16777216",
     )
     .build()
     {

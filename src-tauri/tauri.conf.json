@@ -23,7 +23,7 @@
         "visible": false,
         "width": 800,
         "height": 600,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-compositing --disk-cache-size=16777216"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-direct-composition-video-overlays --disk-cache-size=16777216"
       }
     ],
     "security": {
