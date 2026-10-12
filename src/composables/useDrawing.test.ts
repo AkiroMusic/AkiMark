@@ -528,3 +528,119 @@ describe("useDrawing 序号工具 / 形状填充", () => {
     expect(h2.calls).toContain("strokeRect");
   });
 });
+
+describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
+  function countCalls(ctx: unknown, name: string): number {
+    const mock = ctx as Record<string, unknown>;
+    return (mock[name] as ReturnType<typeof vi.fn>).mock.calls.length;
+  }
+
+  it("橡皮拖动走增量路径：历史层不再每帧 clear + 整层重画", () => {
+    const { drawing, historyCtx } = setup();
+    // 先提交一笔普通笔画（给橡皮东西可擦）
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(60, 60));
+    drawing.endDraw();
+    flushRaf();
+
+    drawing.currentTool.value = "eraser";
+    drawing.startDraw(pointer(30, 30));
+    flushRaf();
+    const clearsBefore = countCalls(historyCtx.ctx, "clearRect");
+    // 拖动三帧，每帧都渲染
+    drawing.drawTo(pointer(40, 40));
+    flushRaf();
+    drawing.drawTo(pointer(50, 50));
+    flushRaf();
+    drawing.drawTo(pointer(60, 40));
+    flushRaf();
+    // 增量路径只做 destination-out 追加描擦，不清历史层
+    expect(countCalls(historyCtx.ctx, "clearRect")).toBe(clearsBefore);
+    // 且确实发生了擦除描边
+    expect(countCalls(historyCtx.ctx, "stroke")).toBeGreaterThan(0);
+    // 提交后全量重绘包含橡皮动作（destination-out 重放），行为一致
+    drawing.endDraw();
+    flushRaf();
+    expect(drawing.canUndo.value).toBe(true);
+  });
+
+  it("橡皮：笔画中途 undo 触发全量重绘后，增量进度重新对齐", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(60, 60));
+    drawing.endDraw();
+    flushRaf();
+
+    drawing.currentTool.value = "eraser";
+    drawing.startDraw(pointer(30, 30));
+    drawing.drawTo(pointer(40, 40));
+    flushRaf();
+    // 拖拽中途撤销上一笔 → 进度作废 + 历史层置脏
+    drawing.undo();
+    flushRaf();
+    const clearsBefore = countCalls(historyCtx.ctx, "clearRect");
+    drawing.drawTo(pointer(50, 50));
+    flushRaf();
+    // undo 后增量已被 reset，新增点走追加（不清层）
+    expect(countCalls(historyCtx.ctx, "clearRect")).toBe(clearsBefore);
+    drawing.endDraw();
+    flushRaf();
+    expect(drawing.canClear.value).toBe(true);
+  });
+
+  it("马赛克预览追加：第二帧只画新块，不清预览层", () => {
+    const { drawing, previewCtx } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(0, 0));
+    drawing.drawTo(pointer(200, 0));
+    flushRaf();
+    const drawImage = previewCtx.ctx.drawImage as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const firstFrameBlocks = drawImage.mock.calls.length;
+    expect(firstFrameBlocks).toBeGreaterThan(0);
+
+    const clearsBefore = countCalls(previewCtx.ctx, "clearRect");
+    drawing.drawTo(pointer(400, 0));
+    flushRaf();
+    const secondFrameBlocks = drawImage.mock.calls.length - firstFrameBlocks;
+    // 追加模式：新块数与首帧同量级（同距离），远小于首帧+首帧的全量重画
+    expect(secondFrameBlocks).toBeLessThanOrEqual(firstFrameBlocks + 2);
+    // 追加路径不清预览层
+    expect(countCalls(previewCtx.ctx, "clearRect")).toBe(clearsBefore);
+    // 采样沿 x 轴推进：新块首采样横坐标应大于首帧末块（只画了新段）
+    const lastFirst = drawImage.mock.calls[firstFrameBlocks - 1]?.[5] as number;
+    const firstSecond = drawImage.mock.calls[firstFrameBlocks]?.[5] as number;
+    expect(firstSecond).toBeGreaterThan(lastFirst);
+  });
+
+  it("钢笔预览追加：整个笔画只 clear 一次预览层", () => {
+    const { drawing, previewCtx } = setup();
+    drawing.currentTool.value = "pen";
+    drawing.startDraw(pointer(10, 10, 0.5, "pen"));
+    flushRaf();
+    drawing.drawTo(pointer(30, 10, 0.5, "pen"));
+    flushRaf();
+    drawing.drawTo(pointer(50, 10, 0.5, "pen"));
+    flushRaf();
+    drawing.drawTo(pointer(70, 10, 0.5, "pen"));
+    flushRaf();
+    // 4 帧渲染只允许 1 次 clearRect（首帧全画，其余追加）
+    expect(countCalls(previewCtx.ctx, "clearRect")).toBe(1);
+    // 后续帧确实画了新段（逐段 stroke 持续发生）
+    expect(countCalls(previewCtx.ctx, "stroke")).toBeGreaterThanOrEqual(3);
+  });
+
+  it("无新增采样的 move 不触发预览重绘", () => {
+    const { drawing, previewCtx } = setup();
+    drawing.currentTool.value = "pen";
+    drawing.startDraw(pointer(10, 10, 0.5, "pen"));
+    flushRaf();
+    const strokesBefore = countCalls(previewCtx.ctx, "stroke");
+    // 亚像素位移（低于 0.5px² 采样阈值）→ 不产生新点 → 不调度渲染
+    drawing.drawTo(pointer(10.2, 10.2, 0.5, "pen"));
+    flushRaf();
+    expect(countCalls(previewCtx.ctx, "stroke")).toBe(strokesBefore);
+  });
+});

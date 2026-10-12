@@ -91,25 +91,24 @@ export function useDrawing(
   let blurComposite: HTMLCanvasElement | null = null;
   let blurCompositeDirty = true;
 
-  /** 橡皮拖动快照：笔画开始时的 history 层位图。拖动期间按
-   * "清层 → 贴快照 → 擦当前笔画"做 O(笔画长度) 增量更新，
-   * 替代每帧全量重放历史（含马赛克逐块 drawImage 采样）。 */
-  let eraserSnapshot: HTMLCanvasElement | null = null;
+  /**
+   * 预览/擦除增量渲染进度：记录当前笔画已画到第几个采样单元，
+   * 下一帧只画新增部分（不做全屏 clear + 全路径重描，长笔画 O(n²) → O(n)）。
+   * - eraserAppliedPoints：橡皮已应用到 history 层的点数（destination-out
+   *   不透明度恒 1，重叠描擦幂等，追加绘制与全量重绘结果一致）
+   * - penAppliedPoints：钢笔预览已画点数（逐段独立 stroke，追加绘制
+   *   与全量重绘的合成顺序一致，逐像素等价）
+   * - blurAppliedSamples：马赛克预览已画采样块数（source-over 贴同一源区
+   *   幂等，追加只画新块）
+   */
+  let eraserAppliedPoints = 0;
+  let penAppliedPoints = 0;
+  let blurAppliedSamples = 0;
 
-  function invalidateEraserSnapshot() {
-    eraserSnapshot = null;
-  }
-
-  function takeEraserSnapshot() {
-    invalidateEraserSnapshot();
-    if (!historyCtx || typeof document === "undefined") return;
-    const snap = document.createElement("canvas");
-    snap.width = historyCtx.canvas.width;
-    snap.height = historyCtx.canvas.height;
-    const sctx = snap.getContext("2d");
-    if (!sctx) return;
-    sctx.drawImage(historyCtx.canvas, 0, 0);
-    eraserSnapshot = snap;
+  function resetPreviewProgress() {
+    eraserAppliedPoints = 0;
+    penAppliedPoints = 0;
+    blurAppliedSamples = 0;
   }
 
   const canUndo = computed(() => undoStack.value.length > 0);
@@ -164,10 +163,10 @@ export function useDrawing(
       }
     }
 
-    // 画布尺寸变化 → 马赛克合成底图需按新尺寸重建；橡皮快照随之失效；
-    // 三层全部重绘
+    // 画布尺寸变化 → 马赛克合成底图需按新尺寸重建；进行中笔画的增量
+    // 进度作废（下一帧全量重画）；三层全部重绘
     blurCompositeDirty = true;
-    invalidateEraserSnapshot();
+    resetPreviewProgress();
     historyDirty = true;
     fadingDirty = true;
     scheduleRender();
@@ -175,13 +174,12 @@ export function useDrawing(
 
   /** 点坐标换算到 CSS 像素 */
   function toCssPoint(e: PointerEvent | MouseEvent): Point {
-    const rect = refs.preview.value?.getBoundingClientRect();
-    // 缩放模式下 canvas 被 transform 缩放，getBoundingClientRect 会返回变换后的盒；
-    // 此时以布局基准（overlay 原点 0,0）直接取 client 坐标，再交给 coordMapper
-    // 逆变换回捕获空间，避免变换盒导致的偏移。
+    // 缩放模式（有 coordMapper）以布局基准（overlay 原点 0,0）直接取 client
+    // 坐标再逆变换，无需读 canvas 变换后的盒——省去每帧 getBoundingClientRect
     const hasMapper = opts.coordMapper != null;
-    const baseX = hasMapper ? 0 : (rect?.left ?? 0);
-    const baseY = hasMapper ? 0 : (rect?.top ?? 0);
+    const rect = hasMapper ? null : refs.preview.value?.getBoundingClientRect();
+    const baseX = rect?.left ?? 0;
+    const baseY = rect?.top ?? 0;
     const p0 = {
       x: e.clientX - baseX,
       y: e.clientY - baseY,
@@ -259,13 +257,16 @@ export function useDrawing(
     ctx.restore();
   }
 
-  /** 压感画笔：逐段按压力调制线宽（钢笔工具专用） */
+  /** 压感画笔：逐段按压力调制线宽（钢笔工具专用）。
+   * fromIdx：起始段索引（每段连接 points[i-1] 与 points[i]），默认 1 = 全部；
+   * 预览追加绘制传已画点数，只画新增段（每段独立 stroke，合成顺序与全量一致）。 */
   function drawPressureSegment(
     ctx: CanvasRenderingContext2D,
     points: Point[],
     color: string,
     baseWidth: number,
     opacity: number,
+    fromIdx = 1,
   ) {
     if (points.length < 2) return;
     ctx.save();
@@ -273,7 +274,7 @@ export function useDrawing(
     ctx.strokeStyle = color;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    for (let i = 1; i < points.length; i++) {
+    for (let i = Math.max(1, fromIdx); i < points.length; i++) {
       const a = points[i - 1];
       const b = points[i];
       const w = Math.max(
@@ -481,13 +482,16 @@ export function useDrawing(
    *   → 块内内容被摊平混合，比旧版逐格硬贴更模糊
    * - 采样步距小于块径（重叠）→ 相邻块边缘柔和过渡
    * - 源坐标按当前画布变换的设备像素比换算（画布已 setTransform(dpr,...)）
+   * fromSample：起始采样块索引，默认 0 = 全部；预览追加绘制传已画块数，
+   * 只画新增块（source-over 贴同一源区幂等）。返回采样块总数。
    */
   function drawMosaicSegment(
     ctx: CanvasRenderingContext2D,
     action: DrawAction,
-  ) {
+    fromSample = 0,
+  ): number {
     const src = blurComposite ?? blurBase;
-    if (!src || action.points.length === 0) return;
+    if (!src || action.points.length === 0) return 0;
     // 块尺寸按动作自身线宽计算（与绘制时刻的 blurCell 公式一致），
     // 不读当前工具线宽：否则切换工具后的全量重绘（undo/渐隐 tick/resize）
     // 会把已有马赛克重画成新颗粒度，与用户所见不一致
@@ -532,7 +536,8 @@ export function useDrawing(
     // 平滑插值：源区压缩进目标块时产生柔和的模糊感（而非旧版硬边像素格）
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
-    for (const s of samples) {
+    for (let i = Math.max(0, fromSample); i < samples.length; i++) {
+      const s = samples[i];
       ctx.drawImage(
         src,
         (s.x - half) * srcScale,
@@ -546,15 +551,26 @@ export function useDrawing(
       );
     }
     ctx.restore();
+    return samples.length;
+  }
+
+  /** 橡皮擦除（destination-out）：全量重绘与增量追加共用。
+   * 不透明度恒 1 → 重叠描擦幂等，追加绘制与整层重绘结果一致。 */
+  function applyEraser(
+    ctx: CanvasRenderingContext2D,
+    points: Point[],
+    lineWidth: number,
+  ) {
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    drawSmoothSegment(ctx, points, "#000", lineWidth, 1);
+    ctx.restore();
   }
 
   function drawAction(ctx: CanvasRenderingContext2D, action: DrawAction) {
     switch (action.tool) {
       case "eraser":
-        ctx.save();
-        ctx.globalCompositeOperation = "destination-out";
-        drawSmoothSegment(ctx, action.points, "#000", action.lineWidth, 1);
-        ctx.restore();
+        applyEraser(ctx, action.points, action.lineWidth);
         break;
       case "rect":
         drawRect(ctx, action);
@@ -654,6 +670,35 @@ export function useDrawing(
   function renderPreview() {
     if (!previewCtx) return;
     ensureBlurComposite();
+    // 橡皮不产生预览内容（直接作用历史层），跳过全屏 clear
+    if (currentAction?.tool === "eraser") {
+      previewDirty = false;
+      return;
+    }
+    // 钢笔追加：不清屏只画新增段（逐段独立 stroke，合成顺序与全量重绘一致）
+    if (currentAction?.tool === "pen" && penAppliedPoints > 0) {
+      drawPressureSegment(
+        previewCtx,
+        currentAction.points,
+        currentAction.color,
+        currentAction.lineWidth,
+        actionOpacity(currentAction),
+        Math.max(1, penAppliedPoints),
+      );
+      penAppliedPoints = currentAction.points.length;
+      previewDirty = false;
+      return;
+    }
+    // 马赛克追加：不清屏只贴新增采样块（source-over 同源重贴幂等）
+    if (currentAction?.tool === "blur" && blurAppliedSamples > 0) {
+      blurAppliedSamples = drawMosaicSegment(
+        previewCtx,
+        currentAction,
+        blurAppliedSamples,
+      );
+      previewDirty = false;
+      return;
+    }
     previewCtx.clearRect(
       0,
       0,
@@ -662,12 +707,32 @@ export function useDrawing(
     );
     if (currentAction) {
       drawAction(previewCtx, currentAction);
+      if (currentAction.tool === "pen") {
+        penAppliedPoints = currentAction.points.length;
+      } else if (currentAction.tool === "blur") {
+        blurAppliedSamples = drawMosaicSegment(previewCtx, currentAction, 0);
+      }
     }
     previewDirty = false;
   }
 
   function render() {
-    if (historyDirty) redrawHistory();
+    if (historyDirty) {
+      redrawHistory();
+      // 全量重绘已包含进行中的橡皮笔画 → 同步增量进度
+      if (currentAction?.tool === "eraser") {
+        eraserAppliedPoints = currentAction.points.length;
+      }
+    } else if (currentAction?.tool === "eraser" && historyCtx) {
+      // 橡皮增量擦除：只把新增点段 destination-out 追加到历史层，
+      // 替代每帧"清层 + 整层重画"（长笔画拖动 O(n²) → O(n)）
+      const pts = currentAction.points;
+      if (pts.length > 1 && pts.length > eraserAppliedPoints) {
+        const from = Math.max(0, eraserAppliedPoints - 1);
+        applyEraser(historyCtx, pts.slice(from), currentAction.lineWidth);
+        eraserAppliedPoints = pts.length;
+      }
+    }
     if (fadingDirty) redrawFading();
     if (previewDirty) renderPreview();
   }
@@ -774,14 +839,12 @@ export function useDrawing(
     ) {
       currentAction.filled = true;
     }
-    // 橡皮：快照当前历史层位图，拖动期间做增量擦除（见 eraserSnapshot）
-    if (currentTool.value === "eraser") {
-      takeEraserSnapshot();
-    }
     // 形状工具：起始点即两点起点
     if (isShape) currentAction.points.push({ x: p.x, y: p.y });
     lastPoint = p;
     isDrawing.value = true;
+    // 新笔画从零开始累计增量渲染进度
+    resetPreviewProgress();
     previewDirty = true;
     scheduleRender();
     return true;
@@ -824,25 +887,8 @@ export function useDrawing(
     currentAction.points.push(...points);
     lastPoint = p;
     previewDirty = true;
-    // 橡皮实时擦除：有快照时走 O(笔画长度) 增量路径（清层 → 贴快照 → 擦当前
-    // 笔画），无快照（node 测试环境 / 拖动期间发生过 undo 等）回退全量重绘
-    if (currentAction.tool === "eraser") {
-      if (eraserSnapshot && historyCtx) {
-        historyCtx.save();
-        historyCtx.setTransform(1, 0, 0, 1, 0, 0);
-        historyCtx.clearRect(
-          0,
-          0,
-          historyCtx.canvas.width,
-          historyCtx.canvas.height,
-        );
-        historyCtx.drawImage(eraserSnapshot, 0, 0);
-        historyCtx.restore();
-        drawAction(historyCtx, currentAction);
-      } else {
-        historyDirty = true;
-      }
-    }
+    // 橡皮实时擦除走 render() 的增量路径（destination-out 追加新增段），
+    // 此处只置脏，不再整层重画
     scheduleRender();
   }
 
@@ -902,7 +948,6 @@ export function useDrawing(
     } else {
       historyDirty = true;
     }
-    invalidateEraserSnapshot();
     redoStack.value = [];
     currentAction = null;
     lastPoint = null;
@@ -931,7 +976,8 @@ export function useDrawing(
     blurCompositeDirty = true;
     historyDirty = true;
     fadingDirty = true;
-    invalidateEraserSnapshot();
+    // 笔画中途撤销（Ctrl+Z 拖拽中）等极端时序：增量进度作废，下帧全量重画
+    resetPreviewProgress();
     scheduleRender();
   }
 
@@ -957,7 +1003,7 @@ export function useDrawing(
     blurCompositeDirty = true;
     historyDirty = true;
     fadingDirty = true;
-    invalidateEraserSnapshot();
+    resetPreviewProgress();
     scheduleRender();
   }
 
@@ -969,7 +1015,7 @@ export function useDrawing(
     blurCompositeDirty = true;
     historyDirty = true;
     fadingDirty = true;
-    invalidateEraserSnapshot();
+    resetPreviewProgress();
     scheduleRender();
   }
 
@@ -985,7 +1031,7 @@ export function useDrawing(
     blurComposite = null;
     blurCompositeDirty = true;
     stopFadeTimer();
-    invalidateEraserSnapshot();
+    resetPreviewProgress();
     historyDirty = true;
     fadingDirty = true;
     previewDirty = true;
