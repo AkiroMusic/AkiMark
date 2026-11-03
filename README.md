@@ -1,5 +1,6 @@
 # AkiMark
 
+[![Website](https://img.shields.io/badge/site-akiromusic.github.io-6D82FF)](https://akiromusic.github.io/AkiMark/)
 > Lightweight on-screen annotation tool — mark anything on your screen with a global hotkey, then get out of the way.
 
 AkiMark is a minimal, always-resident screen markup utility built with **Tauri v2 + Vue 3**. It sits quietly in your system tray with near-zero resource usage, and activates a full-screen drawing overlay in milliseconds when you press a global hotkey. Great for presentations, screen recordings, teaching, or live collaboration.
