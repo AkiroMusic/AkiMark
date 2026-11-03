@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en" data-pack="aurora">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AkiMark — Screen annotation on a hotkey</title>
+<meta name="description" content="Lightweight on-screen annotation — mark anything on your screen with a global hotkey, then get out of the way.">
+<meta property="og:title" content="AkiMark — Screen annotation on a hotkey">
+<meta property="og:description" content="Lightweight on-screen annotation — mark anything on your screen with a global hotkey, then get out of the way.">
+<meta property="og:url" content="https://akiromusic.github.io/AkiMark/">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/palette.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="aurora-bg"></div>
+<div class="aurora-sweep"></div>
+<div class="star-field"></div>
+<div class="noise-overlay"></div>
+
+<header class="site-nav material-frosted">
+  <a class="brand" href="#"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>AkiMark</a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#details">Details</a>
+    <a href="https://github.com/AkiroMusic/AkiMark" class="nav-keep">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <div class="hero-card panel-contrast material-film flow-nebula spring-in">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Desktop App · Tauri v2 + Vue 3</div>
+      <h1>Aki<span class="grad-text">Mark</span></h1>
+      <p class="tagline">Lightweight on-screen annotation — mark anything on your screen with a global hotkey, then get out of the way.</p>
+      <div class="badge-row"><span class="badge">License <b>MIT</b></span><span class="badge">Platform <b>Windows</b></span><span class="badge">Tech <b>Tauri v2 · Vue 3</b></span><span class="badge">Size <b>~4 MB</b></span></div>
+      <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/AkiroMusic/AkiMark/releases/latest">Download latest</a>
+          <a class="btn btn-ghost" href="https://github.com/AkiroMusic/AkiMark">Source code</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Features</div>
+      <h2>What it does</h2>
+      <p class="sub">AkiMark is a minimal, always-resident screen markup utility built with Tauri v2 + Vue 3. It sits quietly in the system tray at near-zero resource cost and brings up a full-screen drawing overlay in milliseconds on a global hotkey — great for presentations, screen recordings, teaching and live collaboration. Currently a beta preview (v0.2.6).</p>
+    </div>
+    <div class="feature-grid">
+          <article class="feature-card material-liquid double-bezel spring-in wide" style="animation-delay:80ms"><div class="f-icon">⚡</div><h3>Instant activation</h3><p>A pre-built hidden overlay window appears in milliseconds on a single global hotkey. The app stays resident in the tray with near-zero footprint; click-through keeps your annotations visible while you keep working.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:140ms"><div class="f-icon">🖌️</div><h3>Eleven tools</h3><p>Pen, highlighter, eraser, line, rectangle, circle, arrow, text, fading pen, blur and step counter — with an 8-color palette cycled via Q/E.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:200ms"><div class="f-icon">🔍</div><h3>Buttery-smooth strokes</h3><p>Dual-canvas engine with quadratic Bézier midpoint smoothing and coalesced pointer events. Pressure-sensitive on pen tablets; mouse and trackpad draw at a constant width.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:260ms"><div class="f-icon">⏳</div><h3>Fading pen &amp; mosaic</h3><p>Fading strokes dissolve about 3 s after being drawn; the blur pen pixelates the underlying screen along the stroke path.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:320ms"><div class="f-icon">🔦</div><h3>Spotlight &amp; zoom</h3><p>Dim everything except a follow-cursor highlight, or freeze-zoom the whole overlay 2x–8x anchored on the cursor — and keep drawing while zoomed.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:380ms"><div class="f-icon">🧑‍🏫</div><h3>Whiteboard / blackboard</h3><p>Flip the overlay into a plain board for free-hand lecturing; exports skip the screen capture.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:440ms"><div class="f-icon">📸</div><h3>Export &amp; copy</h3><p>Composite annotations onto the underlying screen, save as PNG to a custom folder or copy to the clipboard. Full undo / redo / clear history stack.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:500ms"><div class="f-icon">🚦</div><h3>No dead states</h3><p>Overlay modes are mutually self-consistent: Esc steps out layer by layer (zoom → spotlight → board → exit), hotkey conflicts are detected inline, and a single-instance guard keeps the tray clean.</p></article>
+    </div>
+  </section>
+
+  
+
+  <section class="block" id="details">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Details</div>
+      <h2>Global hotkeys</h2>
+    </div>
+    <div class="detail-card material-liquid double-bezel"><table class="detail-table"><thead><tr><th>Shortcut</th><th>Action</th></tr></thead><tbody><tr><td>Ctrl+Shift+R</td><td>Toggle annotation mode</td></tr><tr><td>Ctrl+Shift+C</td><td>Clear screen</td></tr><tr><td>Ctrl+Shift+X</td><td>Toggle click-through</td></tr></tbody></table></div>
+  </section>
+
+  <section class="block" id="quick-start">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Quick Start</div>
+      <h2>Build from source</h2>
+    </div>
+    <div class="qs-grid">
+      <div class="qs-steps material-liquid double-bezel spring-in">
+        <ol><li><b>Install</b> Node.js ≥ 20, Rust (stable, 1.77+) and the Tauri v2 prerequisites — WebView2 on Windows.</li><li><b>Run</b> <code>npm install</code>, then <code>npm run dev</code>.</li><li>The app starts resident in the tray and opens the settings window.</li><li>Press <code>Ctrl+Shift+R</code> to start annotating.</li></ol>
+      </div>
+      <div class="code-card panel-contrast spring-in" style="animation-delay:80ms">
+        <div class="code-title"><span class="dot"></span>shell</div>
+        <pre>npm install
+npm run dev
+
+npm run build      # bundles installer (NSIS) into src-tauri/target/release/
+npm run build:fe   # frontend only (vue-tsc + vite)</pre>
+      </div>
+    </div>
+  </section>
+
+  
+
+  <div class="hairline"></div>
+
+  <section class="block i18n-cn" id="中文" lang="zh-CN">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>桌面应用 · Tauri v2 + Vue 3</div>
+      <h2>项目简介</h2>
+      <p class="sub">AkiMark 是一款基于 Tauri v2 + Vue 3 构建的极简常驻屏幕标注工具。它安静地驻留在系统托盘中，资源占用近乎为零；按下全局热键即可在毫秒级唤起全屏绘制覆盖层——非常适合演示、录屏、教学与实时协作。当前为内测预览版（v0.2.6）。</p>
+    </div>
+    <div class="feature-grid">
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:80ms"><div class="f-icon">⚡</div><h3>即时激活</h3><p>预建的隐藏覆盖窗口，按一次全局热键即可毫秒级显示。应用常驻托盘、占用近乎为零；穿透模式让你在继续操作的同时保持标注可见。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:140ms"><div class="f-icon">🖌️</div><h3>11 种工具</h3><p>画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字、渐隐笔、马赛克笔、序号标注——配 8 色调色板，Q/E 快速循环切换。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:200ms"><div class="f-icon">🔍</div><h3>顺滑的笔迹</h3><p>双画布引擎，二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标与触控板以恒定宽度绘制。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:260ms"><div class="f-icon">⏳</div><h3>渐隐笔与马赛克</h3><p>渐隐笔画在绘制约 3 秒后自动溶解；马赛克笔沿笔画路径将底层屏幕画面打上马赛克。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:320ms"><div class="f-icon">🔦</div><h3>聚光灯与缩放</h3><p>压暗四周、突出跟随光标的亮点，或以光标为锚点将整个覆盖层冻结放大 2x–8x——放大状态下仍可继续绘制。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:380ms"><div class="f-icon">🧑‍🏫</div><h3>白板 / 黑板</h3><p>一键切换为纯色板书底，自由板书；导出时跳过屏幕截取。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:440ms"><div class="f-icon">📸</div><h3>导出与复制</h3><p>将标注合成到底层屏幕，保存为 PNG 到自定义目录，或一键复制到剪贴板。完整的撤销 / 重做 / 清屏历史栈。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:500ms"><div class="f-icon">🚦</div><h3>无死状态</h3><p>覆盖层各模式互斥关系完全自洽：Esc 逐级退出（缩放 → 聚光灯 → 板书 → 退出标注），热键冲突内联检测，单实例保护让托盘始终清爽。</p></article>
+    </div>
+    <div class="block-head" style="margin-top:var(--space-8)">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>明细</div>
+      <h2>全局热键</h2>
+    </div>
+    <div class="detail-card material-liquid double-bezel"><table class="detail-table"><thead><tr><th>快捷键</th><th>操作</th></tr></thead><tbody><tr><td>Ctrl+Shift+R</td><td>切换标注模式（开始 / 结束标注）</td></tr><tr><td>Ctrl+Shift+C</td><td>清屏</td></tr><tr><td>Ctrl+Shift+X</td><td>切换穿透模式</td></tr></tbody></table></div>
+    <div class="qs-grid" style="margin-top:var(--space-8)">
+      <div class="qs-steps material-liquid double-bezel spring-in">
+        <ol><li><b>安装</b> Node.js ≥ 20、Rust（稳定版 1.77+）与 Tauri v2 前置条件——Windows 下为 WebView2。</li><li><b>运行</b> <code>npm install</code>，然后 <code>npm run dev</code>。</li><li>应用启动后驻留托盘并打开设置窗口。</li><li>按 <code>Ctrl+Shift+R</code> 开始标注。</li></ol>
+      </div>
+      <div class="code-card panel-contrast spring-in" style="animation-delay:80ms">
+        <div class="code-title"><span class="dot"></span>shell</div>
+        <pre>npm install
+npm run dev
+
+npm run build      # bundles installer (NSIS) into src-tauri/target/release/
+npm run build:fe   # frontend only (vue-tsc + vite)</pre>
+      </div>
+    </div>
+  </section>
+
+  
+
+  <footer class="site-footer">
+    <div class="footer-row material-liquid">
+      <div>
+        <a class="brand" href="#"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>AkiMark</a>
+        <p class="footer-meta" style="margin-top:var(--space-3);max-width:340px">Lightweight on-screen annotation — mark anything on your screen with a global hotkey, then get out of the way.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/AkiroMusic/AkiMark">Source code ↗</a>
+        <a href="https://github.com/AkiroMusic/AkiMark/releases/latest">Releases ↗</a>
+      </div>
+      <div class="footer-links">
+        <a href="https://akiromusic.com/">akiromusic.com ↗</a>
+        <a href="https://github.com/AkiroMusic">GitHub Profile ↗</a>
+        <a href="https://akiromusic.github.io/AkiroMusic/">All project sites ↗</a>
+      </div>
+    </div>
+    <p class="footer-meta">© 2026 Akiro · MIT licensed. Built with the Aurora Glass design system.</p>
+  </footer>
+
+</main>
+</body>
+</html>
