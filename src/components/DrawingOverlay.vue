@@ -164,6 +164,18 @@ const {
   zoom: () => modes.zoom.value,
 });
 
+// ---- 文字工具输入框（IME 安全提交）----
+/** IME 组合态的 Enter 是"选词"而非"提交"：isComposing 时不落笔 */
+function onTextEnter(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  commitText();
+}
+/** IME 组合态的 Esc 是"取消候选"而非"取消输入框" */
+function onTextEsc(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  commitText(true);
+}
+
 // ---- 绘制预设同步（config ⇄ 会话） ----
 const {
   preserveDrawings,
@@ -415,6 +427,8 @@ function onPointerMove(e: PointerEvent) {
   if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   cursor.x = e.clientX;
   cursor.y = e.clientY;
+  // pointerenter 偶发缺席（WebView2 焦点切换路径）：move 即视为在窗口内
+  if (!cursorVisible.value) cursorVisible.value = true;
   requestCursorSync();
   if (pointerDown || rmbErasing) {
     drawing.drawTo(e);
@@ -439,6 +453,12 @@ function onWindowPointerUp(e: PointerEvent) {
   endPointerInteraction();
 }
 
+function onPointerEnter() {
+  // 离窗再入：恢复自定义光标可见性（否则要点击一次才重新出现）
+  cursorVisible.value = true;
+  requestCursorSync();
+}
+
 function onPointerLeave() {
   cursorVisible.value = false;
 }
@@ -459,6 +479,9 @@ function isOverToolbar(e: PointerEvent): boolean {
 function onKeyDown(e: KeyboardEvent) {
   // 截屏导出期间锁定快捷键
   if (uiLocked) return;
+  // IME 组合期间不响应任何快捷键：组合态的 Enter/Esc 属于输入法操作
+  //（选词/取消候选），不是用户指令
+  if (e.isComposing) return;
   // 空格键兼容：标准环境 key 为 " "，个别环境为 "Space"（IME 组合期间为 "Process"，由 isComposing 拦截）
   const k = e.key === " " || e.code === "Space" ? " " : e.key;
   const meta = e.ctrlKey || e.metaKey;
@@ -496,9 +519,11 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     }
     case "q":
+    case "Q":
       cycleColor(-1);
       break;
     case "e":
+    case "E":
       cycleColor(1);
       break;
     case "b":
@@ -905,6 +930,7 @@ onBeforeUnmount(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
+    @pointerenter="onPointerEnter"
     @pointerleave="onPointerLeave"
     @contextmenu.prevent
   >
@@ -986,8 +1012,8 @@ onBeforeUnmount(() => {
       :placeholder="t('action.textPlaceholder')"
       @pointerdown.stop
       @keydown.stop
-      @keydown.enter.prevent="commitText()"
-      @keydown.esc="commitText(true)"
+      @keydown.enter.prevent="onTextEnter($event)"
+      @keydown.esc="onTextEsc($event)"
       @blur="onTextBlur"
     />
 

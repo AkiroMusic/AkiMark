@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { TOOL_DEFS, TOOL_WIDTH_GROUP, WIDTH_MAX } from "../constants/tools";
 import { COLOR_PALETTE } from "../constants/colors";
 import { useI18n } from "../i18n";
@@ -100,10 +100,13 @@ const colorPicker = ref<HTMLInputElement | null>(null);
 function openPicker() {
   colorPicker.value?.click();
 }
+/** input 连发：只做实时预览（最近色列表等确认后再加入） */
 function onPickColor(e: Event) {
-  const value = (e.target as HTMLInputElement).value;
-  emit("selectColor", value);
-  emit("customColor", value);
+  emit("selectColor", (e.target as HTMLInputElement).value);
+}
+/** change：取色器确认（关闭弹窗）才记入最近使用色，避免中间色污染列表 */
+function onPickColorCommit(e: Event) {
+  emit("customColor", (e.target as HTMLInputElement).value);
 }
 
 // ---- 工具栏拖动（位置记忆由父组件经 localStorage 持久化）----
@@ -142,22 +145,48 @@ function onDragEnd() {
   dragOrigin = null;
   if (pos.value) emit("toolbarMoved", { ...pos.value });
 }
+/** 把位置钳制到当前视口内（载入记忆/窗口尺寸变化时调用；rect 为缩放后视觉盒） */
+function clampPos(p: { x: number; y: number }): { x: number; y: number } {
+  const rect = rootEl.value?.getBoundingClientRect();
+  const w = rect?.width ?? 0;
+  const h = rect?.height ?? 0;
+  const maxX = Math.max(0, window.innerWidth - w);
+  const maxY = Math.max(0, window.innerHeight - h);
+  return {
+    x: Math.min(maxX, Math.max(0, p.x)),
+    y: Math.min(maxY, Math.max(0, p.y)),
+  };
+}
+
+onMounted(() => {
+  // 载入的记忆位置按当前视口重新钳制（分辨率/显示器可能已变化）
+  if (pos.value) pos.value = clampPos(pos.value);
+  window.addEventListener("resize", onWindowResize);
+});
+function onWindowResize() {
+  if (pos.value) pos.value = clampPos(pos.value);
+}
 onBeforeUnmount(() => {
   dragOrigin = null;
+  window.removeEventListener("resize", onWindowResize);
 });
 
-/** 根节点定位 + 缩放：缩放原点在顶部中点（缩小后仍贴顶，不飘走） */
+/** 根节点定位 + 缩放。拖动定位态用 top left 原点：left/top（未缩放坐标）
+ * = 视觉左上角，与 getBoundingClientRect 同一坐标系，scale≠1 时拖动
+ * 与位置记忆不漂移；默认态仍贴顶居中（origin top center）。 */
 const rootStyle = computed(() => {
-  const base: Record<string, string> = {
-    transformOrigin: "top center",
-    transform: `translateX(-50%) scale(${props.scale})`,
-  };
-  if (pos.value) {
-    base.left = `${pos.value.x}px`;
-    base.top = `${pos.value.y}px`;
-    base.transform = `scale(${props.scale})`;
+  if (!pos.value) {
+    return {
+      transformOrigin: "top center",
+      transform: `translateX(-50%) scale(${props.scale})`,
+    };
   }
-  return base;
+  return {
+    transformOrigin: "top left",
+    left: `${pos.value.x}px`,
+    top: `${pos.value.y}px`,
+    transform: `scale(${props.scale})`,
+  };
 });
 </script>
 
@@ -239,6 +268,7 @@ const rootStyle = computed(() => {
         type="color"
         class="color-picker"
         @input="onPickColor"
+        @change="onPickColorCommit"
       />
     </div>
 
