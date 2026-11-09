@@ -109,6 +109,8 @@ export function useDrawing(
     eraserAppliedPoints = 0;
     penAppliedPoints = 0;
     blurAppliedSamples = 0;
+    // 马赛克采样缓存随笔画生命周期失效（新笔画/撤销/清屏/重建画布）
+    mosaicCache = null;
   }
 
   const canUndo = computed(() => undoStack.value.length > 0);
@@ -476,6 +478,92 @@ export function useDrawing(
     blurCompositeDirty = false;
   }
 
+  /** 马赛克采样硬上限（块数）：弧长步进采样总数封顶。此前 break 只跳出
+   * 内层 while，多段路径每段仍可再补 1 块，上限是软的。 */
+  const MOSAIC_MAX_SAMPLES = 5000;
+
+  /**
+   * 当前马赛克笔画的采样缓存：弧长步进是顺序算法，前缀点产生的采样与全量
+   * 重算逐位一致 → 增量帧只对新增线段继续采样，消除每帧 O(全部点数) 的
+   * 重复计算。action 引用做身份校验（重绘历史里其他 blur 动作不命中缓存）；
+   * traveled/nextAt 是续算游标。transient 的"尾点补偿"不入缓存（见下）。
+   */
+  let mosaicCache: {
+    action: DrawAction;
+    pointsLength: number;
+    samples: Point[];
+    traveled: number;
+    nextAt: number;
+  } | null = null;
+
+  /**
+   * 确保动作的采样数组就绪：无缓存（或缓存属于其他动作）时全量计算，
+   * 命中时只对 pointsLength 之后的新线段续算。到达硬上限后不再新增采样。
+   */
+  function ensureMosaicSamples(action: DrawAction): Point[] {
+    const cell = Math.max(BLUR_CELL_MIN, Math.round(action.lineWidth * 0.8));
+    const step = cell * 0.75;
+    const pts = action.points;
+    if (
+      mosaicCache &&
+      mosaicCache.action === action &&
+      mosaicCache.pointsLength <= pts.length
+    ) {
+      const cache = mosaicCache;
+      if (cache.pointsLength === pts.length) return cache.samples;
+      // 增量续算：从游标继续，只处理新增线段
+      const { samples } = cache;
+      for (let i = cache.pointsLength; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        const seg = Math.hypot(b.x - a.x, b.y - a.y);
+        if (seg >= 1e-4) {
+          const segEnd = cache.traveled + seg;
+          while (
+            cache.nextAt <= segEnd &&
+            samples.length < MOSAIC_MAX_SAMPLES
+          ) {
+            const t = (cache.nextAt - cache.traveled) / seg;
+            samples.push({
+              x: a.x + (b.x - a.x) * t,
+              y: a.y + (b.y - a.y) * t,
+            });
+            cache.nextAt += step;
+          }
+          cache.traveled = segEnd;
+        }
+        cache.pointsLength = i + 1;
+      }
+      return samples;
+    }
+    // 全量计算（从头采样；labeled break 实现真正的硬上限）
+    const samples: Point[] = [{ x: pts[0].x, y: pts[0].y }];
+    let traveled = 0;
+    let nextAt = step;
+    outer: for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const seg = Math.hypot(b.x - a.x, b.y - a.y);
+      if (seg < 1e-4) continue;
+      const segEnd = traveled + seg;
+      while (nextAt <= segEnd) {
+        const t = (nextAt - traveled) / seg;
+        samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+        nextAt += step;
+        if (samples.length >= MOSAIC_MAX_SAMPLES) break outer;
+      }
+      traveled = segEnd;
+    }
+    mosaicCache = {
+      action,
+      pointsLength: pts.length,
+      samples,
+      traveled,
+      nextAt,
+    };
+    return samples;
+  }
+
   /**
    * 马赛克笔：以合成底图（blurComposite ?? blurBase）为源，沿笔画路径采样。
    * - 每个块采样更大的源区域（cell × sourceScale=3）压进 cell，平滑插值
@@ -483,7 +571,9 @@ export function useDrawing(
    * - 采样步距小于块径（重叠）→ 相邻块边缘柔和过渡
    * - 源坐标按当前画布变换的设备像素比换算（画布已 setTransform(dpr,...)）
    * fromSample：起始采样块索引，默认 0 = 全部；预览追加绘制传已画块数，
-   * 只画新增块（source-over 贴同一源区幂等）。返回采样块总数。
+   * 只画新增块（source-over 贴同一源区幂等）。返回弧长采样总数（不含尾点）。
+   * 采样经 ensureMosaicSamples 缓存/续算；尾点补偿为 transient：不入缓存、
+   * 每帧按当前端点重算重贴（幂等），笔画提交后的全量重绘与屏幕所见一致。
    */
   function drawMosaicSegment(
     ctx: CanvasRenderingContext2D,
@@ -502,31 +592,13 @@ export function useDrawing(
     // 源区放大系数：越大越糊（源区压进目标块时的摊平程度）
     const sourceScale = 3;
 
-    // 沿折线按弧长步进采样（步距 < 块径 → 重叠，边缘柔和）
-    const step = cell * 0.75;
-    const pts = action.points;
-    const samples: Point[] = [{ x: pts[0].x, y: pts[0].y }];
-    let traveled = 0;
-    let nextAt = step;
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1];
-      const b = pts[i];
-      const seg = Math.hypot(b.x - a.x, b.y - a.y);
-      if (seg < 1e-4) continue;
-      const segEnd = traveled + seg;
-      while (nextAt <= segEnd) {
-        const t = (nextAt - traveled) / seg;
-        samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-        nextAt += step;
-        if (samples.length >= 5000) break;
-      }
-      traveled = segEnd;
-    }
-    const last = pts[pts.length - 1];
-    const tail = samples[samples.length - 1];
-    if (Math.hypot(last.x - tail.x, last.y - tail.y) > 1) {
-      samples.push({ x: last.x, y: last.y });
-    }
+    const samples = ensureMosaicSamples(action);
+    // 尾点补偿（transient）：路径末端与最后采样距离 >1 时补一块，
+    // 保证笔迹终点也有马赛克（弧长步进距终点可能残留 <1 步的缝隙）
+    const last = action.points[action.points.length - 1];
+    const tailSample = samples[samples.length - 1];
+    const hasTail =
+      Math.hypot(last.x - tailSample.x, last.y - tailSample.y) > 1;
 
     const srcSize = cell * sourceScale;
     const half = srcSize / 2;
@@ -536,8 +608,7 @@ export function useDrawing(
     // 平滑插值：源区压缩进目标块时产生柔和的模糊感（而非旧版硬边像素格）
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
-    for (let i = Math.max(0, fromSample); i < samples.length; i++) {
-      const s = samples[i];
+    const drawBlock = (s: Point) => {
       ctx.drawImage(
         src,
         (s.x - half) * srcScale,
@@ -549,7 +620,11 @@ export function useDrawing(
         cell,
         cell,
       );
+    };
+    for (let i = Math.max(0, fromSample); i < samples.length; i++) {
+      drawBlock(samples[i]);
     }
+    if (hasTail) drawBlock(last);
     ctx.restore();
     return samples.length;
   }

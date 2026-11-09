@@ -684,4 +684,23 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     drawing.redo();
     expect(drawing.canClear.value).toBe(false);
   });
+
+  it("马赛克采样硬上限：多段超长路径总计不超过 5000 块", () => {
+    const { drawing, historyCtx } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(0, 0));
+    // 20 段 × 1000px ≈ 8900 块弧长采样需求 → 旧软上限会超出 5000（每段多补 1 块）
+    for (let i = 1; i <= 20; i++) {
+      drawing.drawTo(pointer(i * 1000, 0));
+    }
+    drawing.endDraw();
+    flushRaf();
+    const drawImage = historyCtx.ctx.drawImage as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    // 全量重绘 = 全部弧长采样 + 至多 1 个尾点补偿
+    expect(drawImage.mock.calls.length).toBeLessThanOrEqual(5001);
+    expect(drawImage.mock.calls.length).toBeGreaterThan(0);
+  });
 });
