@@ -1,8 +1,43 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::Manager;
 
 use crate::error::AppResult;
+
+/// 已知工具集合（与前端 src/constants/tools.ts 的 id 一致）
+pub const KNOWN_TOOLS: &[&str] = &[
+    "pen",
+    "fading",
+    "highlighter",
+    "eraser",
+    "line",
+    "rect",
+    "circle",
+    "arrow",
+    "text",
+    "blur",
+    "counter",
+];
+
+/// 线宽钳制到合理范围（stroke 1-40，highlighter 1-80，eraser 1-120）。
+/// 非 finite 值先回退默认：JSON 本身编码不了 NaN/Inf（serde_json 会直接
+/// 拒绝），此处是防御性兜底——f64::clamp 对 NaN 返回 NaN，不设防会穿透。
+pub fn clamp_line_widths(lw: &mut LineWidthsConfig) {
+    if !lw.stroke.is_finite() {
+        lw.stroke = 3.0;
+    }
+    if !lw.highlighter.is_finite() {
+        lw.highlighter = 10.0;
+    }
+    if !lw.eraser.is_finite() {
+        lw.eraser = 12.0;
+    }
+    lw.stroke = lw.stroke.clamp(1.0, 40.0);
+    lw.highlighter = lw.highlighter.clamp(1.0, 80.0);
+    lw.eraser = lw.eraser.clamp(1.0, 120.0);
+}
 
 /// 线宽配置（按工具分组）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -97,7 +132,12 @@ pub fn load_config(app: &tauri::AppHandle) -> AppConfig {
     match config_path(app) {
         Ok(path) => match std::fs::read_to_string(&path) {
             Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                Ok(cfg) => cfg,
+                // serde 只保证类型正确，不校验业务取值（手改的 defaultTool 等
+                // 非法字符串照样解析成功）→ 字段级归一，非法值回退默认
+                Ok(mut cfg) => {
+                    normalize_config(&mut cfg);
+                    cfg
+                }
                 Err(e) => {
                     // 配置损坏：先把原文件改名留证（.bak），再回退默认值。
                     // 否则下次 save_config 会直接用默认配置覆盖，用户再无找回机会。
@@ -137,12 +177,50 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> AppResult<()> 
     }
     let content = serde_json::to_string_pretty(config)?;
     // 原子写入：先写临时文件再 rename，避免写入中途崩溃损坏配置。
-    // 临时名带进程 id：两个窗口并发保存时共用一个固定 tmp 名会互相覆盖
-    //（A 写 tmp → B 覆写 tmp → A rename 成功 → B rename 找不到 tmp）。
-    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    // 临时名带进程 id + 进程内自增序号：两个窗口并发保存时共用一个固定
+    // tmp 名会互相覆盖（A 写 tmp → B 覆写 tmp → A rename 成功 → B rename
+    // 找不到 tmp）。当前所有保存命令都在主线程串行执行，并发是理论场景，
+    // 唯一后缀让正确性不依赖这一隐式事实。
+    static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+    let tmp = path.with_extension(format!(
+        "json.tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+/// 宽松的 HEX 颜色校验（#RGB / #RRGGBB / #RRGGBBAA）
+fn is_hex_color(s: &str) -> bool {
+    s.len() >= 4 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// 手改配置的字段级归一：非法值回退默认，而不是丢掉整份配置。
+/// load_config 反序列化成功后调用；save 路径沿用逐项校验报错。
+pub fn normalize_config(cfg: &mut AppConfig) {
+    let g = &mut cfg.general;
+    if !KNOWN_TOOLS.contains(&g.default_tool.as_str()) {
+        g.default_tool = "pen".into();
+    }
+    if !is_hex_color(&g.default_color) {
+        g.default_color = "#6C8CFF".into();
+    }
+    if g.board_default != "white" && g.board_default != "black" {
+        g.board_default = "white".into();
+    }
+    if g.locale != "zh-CN" && g.locale != "en" {
+        g.locale = "zh-CN".into();
+    }
+    clamp_line_widths(&mut g.line_widths);
+    g.recent_colors = g
+        .recent_colors
+        .drain(..)
+        .filter(|c| is_hex_color(c))
+        .map(|c| c.chars().take(32).collect::<String>())
+        .take(4)
+        .collect();
 }
 
 /// 广播配置变更给所有窗口
@@ -267,5 +345,49 @@ mod tests {
         assert_eq!(cfg.general.locale, "en");
         assert_eq!(cfg.general.default_tool, "pen");
         assert_eq!(cfg.general.board_default, "white");
+    }
+
+    #[test]
+    fn normalize_repairs_invalid_fields() {
+        // 手改配置的非法业务值：字段级回退默认，合法字段保留
+        let json = r##"{"general":{"defaultTool":"bogus","boardDefault":"purple","locale":"fr","defaultColor":"notahex","recentColors":["#abc","zzz","#123456"]}}"##;
+        let mut cfg: AppConfig = serde_json::from_str(json).unwrap();
+        normalize_config(&mut cfg);
+        assert_eq!(cfg.general.default_tool, "pen");
+        assert_eq!(cfg.general.board_default, "white");
+        assert_eq!(cfg.general.locale, "zh-CN");
+        assert_eq!(cfg.general.default_color, "#6C8CFF");
+        assert_eq!(cfg.general.recent_colors, vec!["#abc", "#123456"]);
+    }
+
+    #[test]
+    fn normalize_keeps_valid_fields() {
+        let mut cfg = AppConfig::default();
+        cfg.general.default_tool = "highlighter".into();
+        cfg.general.locale = "en".into();
+        normalize_config(&mut cfg);
+        assert_eq!(cfg.general.default_tool, "highlighter");
+        assert_eq!(cfg.general.locale, "en");
+        assert_eq!(cfg.general.line_widths.stroke, 3.0);
+    }
+
+    #[test]
+    fn normalize_clamps_out_of_range_widths() {
+        let mut cfg = AppConfig::default();
+        cfg.general.line_widths.stroke = 999.0;
+        cfg.general.line_widths.eraser = -5.0;
+        normalize_config(&mut cfg);
+        assert_eq!(cfg.general.line_widths.stroke, 40.0);
+        assert_eq!(cfg.general.line_widths.eraser, 1.0);
+    }
+
+    #[test]
+    fn hex_color_validation_bounds() {
+        assert!(is_hex_color("#abc"));
+        assert!(is_hex_color("#6C8CFF"));
+        assert!(is_hex_color("#6C8CFFAA"));
+        assert!(!is_hex_color("6C8CFF")); // 缺 #
+        assert!(!is_hex_color("#"));
+        assert!(!is_hex_color("#zzzzzz")); // 非 hex 字符
     }
 }

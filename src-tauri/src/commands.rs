@@ -1,31 +1,11 @@
 use tauri::{AppHandle, Manager, State};
 
-use crate::config::{self, AppConfig, GeneralConfig, LineWidthsConfig, Shortcuts};
+use crate::config::{
+    self, clamp_line_widths, AppConfig, GeneralConfig, LineWidthsConfig, Shortcuts, KNOWN_TOOLS,
+};
 use crate::error::{AppError, AppResult};
 use crate::overlay::{self, AppState, OverlayMode, OVERLAY_LABEL};
 use crate::shortcuts;
-
-/// 已知工具集合（与前端 src/constants/tools.ts 的 id 一致）
-const KNOWN_TOOLS: &[&str] = &[
-    "pen",
-    "fading",
-    "highlighter",
-    "eraser",
-    "line",
-    "rect",
-    "circle",
-    "arrow",
-    "text",
-    "blur",
-    "counter",
-];
-
-/// 线宽钳制到合理范围（stroke 1-40，highlighter 1-80，eraser 1-120）
-fn clamp_line_widths(lw: &mut LineWidthsConfig) {
-    lw.stroke = lw.stroke.clamp(1.0, 40.0);
-    lw.highlighter = lw.highlighter.clamp(1.0, 80.0);
-    lw.eraser = lw.eraser.clamp(1.0, 120.0);
-}
 
 /// 后端校验 save_general 的输入：工具集合、线宽范围、导出目录合法性。
 fn validate_general(general: &mut GeneralConfig) -> AppResult<()> {
@@ -105,9 +85,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
         crate::log::log(&format!("capture_screen: 重新显示窗口失败（重试前）: {e}"));
         std::thread::sleep(std::time::Duration::from_millis(50));
         if let Err(e2) = window.show() {
-            crate::log::log(&format!(
-                "capture_screen: 重新显示窗口重试仍失败: {e2}"
-            ));
+            crate::log::log(&format!("capture_screen: 重新显示窗口重试仍失败: {e2}"));
             spawn_guard_reset(&app);
             return Err(AppError::CaptureFailed);
         }
@@ -233,18 +211,22 @@ pub fn save_general(
     mut general: GeneralConfig,
 ) -> AppResult<()> {
     validate_general(&mut general)?;
-    let locale_changed = {
-        let mut config = state.config.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = config.general.locale != general.locale;
-        config.general = general;
-        changed
+    // 磁盘优先（与 save_shortcuts 同一范式）：在候选快照上合并改动并落盘，
+    // 成功后才提交内存——写盘失败时内存保持旧值，重启读取的配置与会话一致，
+    // 不出现"本次运行是新配置、下次启动回旧值"的分裂。
+    let locale_changed;
+    let config_snapshot = {
+        let mut candidate = state
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        locale_changed = candidate.general.locale != general.locale;
+        candidate.general = general;
+        candidate
     };
-    let config_snapshot = state
-        .config
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
     config::save_config(&app, &config_snapshot)?;
+    *state.config.lock().unwrap_or_else(|e| e.into_inner()) = config_snapshot.clone();
     // 语言变更 → 后端面向用户的文案（错误消息/托盘菜单）同步切换
     if locale_changed {
         crate::update_ui_locale(&app, &config_snapshot.general.locale);
@@ -288,14 +270,21 @@ pub fn save_drawing_prefs(
             .recent_colors
             .clone(),
     };
-    let mut config = state.config.lock().unwrap_or_else(|e| e.into_inner());
-    config.general.default_tool = tool;
-    config.general.default_color = color;
-    config.general.line_widths = line_widths;
-    config.general.recent_colors = recent_colors;
-    let config_snapshot = config.clone();
-    drop(config);
+    // 磁盘优先：候选快照上合并，落盘成功才提交内存（防内存/磁盘分裂）
+    let config_snapshot = {
+        let mut candidate = state
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        candidate.general.default_tool = tool;
+        candidate.general.default_color = color;
+        candidate.general.line_widths = line_widths;
+        candidate.general.recent_colors = recent_colors;
+        candidate
+    };
     config::save_config(&app, &config_snapshot)?;
+    *state.config.lock().unwrap_or_else(|e| e.into_inner()) = config_snapshot;
     Ok(())
 }
 
@@ -348,19 +337,13 @@ pub fn get_autostart(app: AppHandle) -> AppResult<bool> {
 }
 
 #[tauri::command]
-pub fn enter_penetration_mode(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub fn enter_penetration_mode(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     // 不吞错：失败传回前端，乐观翻转才有回滚依据（useOverlayModes）
     overlay::enter_penetration_mode(&app, &state)
 }
 
 #[tauri::command]
-pub fn exit_penetration_mode(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub fn exit_penetration_mode(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     overlay::exit_penetration_mode(&app, &state)
 }
 
@@ -383,9 +366,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             let app = window.app_handle();
             let state = app.state::<AppState>();
             if let Err(e) = overlay::deactivate_drawing(app, &state) {
-                crate::log::log(&format!(
-                    "handle_window_event: overlay 关闭转退出失败: {e}"
-                ));
+                crate::log::log(&format!("handle_window_event: overlay 关闭转退出失败: {e}"));
             }
         }
         // settings 窗口默认行为：关闭即销毁
@@ -454,9 +435,7 @@ pub fn handle_focus_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 match w.is_focused() {
                     Ok(false) => {
                         if let Err(e) = overlay::enter_penetration_mode(&app, &state) {
-                            crate::log::log(&format!(
-                                "handle_focus_event: 自动穿透失败: {e}"
-                            ));
+                            crate::log::log(&format!("handle_focus_event: 自动穿透失败: {e}"));
                         }
                     }
                     Ok(true) => {}
