@@ -5,6 +5,71 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - 2026-11-10
+
+Reliability release from an external code review: fixes window/mode/capture
+lifecycle bugs, a preferences save race, multi-pointer and clear-during-stroke
+edge cases, and config persistence robustness.
+
+### Fixed
+
+- **Settings-window focus no longer triggers auto click-through** — the
+  focus-loss handler didn't check which window fired, so closing Settings
+  while annotating could silently switch the overlay to penetration mode.
+- **Penetration failures are no longer swallowed** — the commands returned
+  `Ok` regardless of the OS call's result (the frontend rollback path was
+  dead code), and the backend committed `Penetration` state *before* calling
+  `set_ignore_cursor_events`; a failure left the mode stuck. The mode lock now
+  spans the OS call and commits only on success.
+- **Capture lifecycle hardened** — if hiding the overlay fails the capture
+  aborts (previously it would shoot the overlay's own UI into zoom/mosaic
+  bases and exports); a failed re-show retries once, then errors; the
+  activation-guard reset now runs on every exit path (an early return could
+  leave the guard stuck and permanently disable auto click-through).
+- **Alt+F4 exits cleanly** — closing the overlay window ran a bare `hide()`,
+  leaving the cursor clamped and the backend mode stuck at `Drawing`; it now
+  runs the full deactivation (release cursor, mode → hidden, board reset,
+  `hidden` broadcast).
+- **Preferences save race** — a save in flight that completed after the user
+  changed something else marked the new value as persisted without writing it
+  (disk = old, baseline = new), and the next config broadcast then re-adopted
+  the stale disk value, losing the user's choice twice. Saves now carry a
+  snapshot; after success the baseline advances only to the snapshot and
+  dirtiness is recomputed, so newer changes are re-saved.
+- **Multi-pointer isolation** — a second pointer (finger/pen) moving during a
+  stroke no longer pollutes the path, and its release no longer ends the
+  stroke (`activePointerId` filtering on move/up/cancel/fallback).
+- **Clear cancels the in-flight stroke** — `Ctrl+D` while dragging no longer
+  resurrects the stroke on mouse-up (also fixed when history was empty).
+- **Deterministic export boundary** — export/copy/zoom-capture/blur-base all
+  commit the active stroke first; previously an uncommitted stroke could be
+  missing from the output depending on capture timing.
+- **Mosaic sampling is truly incremental** — the arc-length sampler no longer
+  recomputes the whole path every frame (O(n²) over a stroke), and the 5000
+  sample cap is now a real cap (the old `break` only exited the inner loop,
+  letting long multi-segment strokes overshoot).
+- **Config persistence is transactional** — `save_general` /
+  `save_drawing_prefs` write to disk first and commit memory only on success
+  (matching `save_shortcuts`), so a failed write can't split memory vs disk.
+- **Hand-edited configs are field-normalized on load** — invalid
+  `defaultTool`/`boardDefault`/`locale`/`defaultColor`/`recentColors` fall
+  back per-field to defaults instead of producing a NaN line width or unknown
+  tool; out-of-range widths are clamped (with a non-finite guard).
+- **Toolbar drag with scaling** — the dragged state now uses a top-left
+  transform origin so `left/top` and `getBoundingClientRect` share one
+  coordinate system (no drift at 0.6×/1.5×), and remembered positions are
+  re-clamped to the viewport on load and on resize.
+- **Small UX fixes** — `Shift+Q/E` cycle colors (matching `b/B`, `x/X`,
+  `z/Z`); the color picker only records a color into "recent" on confirm
+  (`change`), not on every drag `input`; the custom cursor reappears when the
+  pointer re-enters the window; IME composition no longer triggers overlay
+  hotkeys, and text-tool `Enter`/`Esc` during composition commit/cancel the
+  IME candidate instead of the annotation (Chinese IME fix).
+- **Docs** — removed the stale `Ctrl+C = Clear` table rows; README now states
+  Windows 10/11-only explicitly.
+
+Tests: 72 → 79 frontend, 18 → 22 Rust.
+
 ## [0.2.6] - 2026-10-12
 
 Performance release: eliminates the chronic frame drops during annotation.

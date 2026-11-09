@@ -7,7 +7,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **Beta** — This is an informal preview release (v0.2.6). Features and behavior may change; expect rough edges.
+> ⚠️ **Beta** — This is an informal preview release (v0.2.7). Features and behavior may change; expect rough edges.
 >
 > 🪟 **Windows only** — AkiMark targets Windows 10/11 (x64). Screen capture, click-through and cursor clamping rely on Win32 APIs; other platforms are not supported.
 
@@ -206,7 +206,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 
 ![AkiMark](assets/icon-1024.png)
 
-> ⚠️ **内测版** — 这是非正式的内测预览版（v0.2.6）。功能与行为可能随时调整，可能尚有不完善之处。
+> ⚠️ **内测版** — 这是非正式的内测预览版（v0.2.7）。功能与行为可能随时调整，可能尚有不完善之处。
 >
 > 🪟 **仅支持 Windows** — AkiMark 面向 Windows 10/11（x64）。截屏、鼠标穿透与光标钳制依赖 Win32 API，不支持其他平台。
 
@@ -392,4 +392,4 @@ npm run icon         # 从 assets/icon-1024.png 生成
 
 ---
 
-*AkiroMusic 用 💙 打造 —— 内测版 v0.2.6*
+*AkiroMusic 用 💙 打造 —— 内测版 v0.2.7*
