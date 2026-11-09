@@ -1008,14 +1008,24 @@ export function useDrawing(
   }
 
   function clearAll() {
-    if (history.value.length === 0) return;
+    // 清屏同时取消进行中的笔画：拖拽中按 Ctrl+D 后松开鼠标，
+    // 被取消的笔画不得重新提交回 history（取消不进撤销栈——
+    // 它从未被提交过，撤销栈里没有它的位置）
+    currentAction = null;
+    lastPoint = null;
+    isDrawing.value = false;
+    resetPreviewProgress();
+    previewDirty = true;
+    if (history.value.length === 0) {
+      scheduleRender();
+      return;
+    }
     undoStack.value.push({ type: "clear", actions: [...history.value] });
     redoStack.value = [];
     history.value = [];
     blurCompositeDirty = true;
     historyDirty = true;
     fadingDirty = true;
-    resetPreviewProgress();
     scheduleRender();
   }
 

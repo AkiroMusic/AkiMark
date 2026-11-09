@@ -133,6 +133,30 @@ export function usePrefsSync(deps: {
     if (prefsDirty) void persistDrawingPrefs();
   }
 
+  /** 当前会话绘制预设快照（保存请求与基线推进都以快照为准） */
+  function readCurrentPrefs() {
+    return {
+      tool: deps.drawing.currentTool.value,
+      color: deps.drawing.currentColor.value,
+      lineWidths: { ...deps.drawing.lineWidths.value },
+      recentColors: [...recentColors.value],
+    };
+  }
+
+  type PrefsSnapshot = ReturnType<typeof readCurrentPrefs>;
+
+  function samePrefs(a: PrefsSnapshot, b: PrefsSnapshot): boolean {
+    return (
+      a.tool === b.tool &&
+      a.color === b.color &&
+      a.lineWidths.stroke === b.lineWidths.stroke &&
+      a.lineWidths.highlighter === b.lineWidths.highlighter &&
+      a.lineWidths.eraser === b.lineWidths.eraser &&
+      a.recentColors.length === b.recentColors.length &&
+      a.recentColors.every((c, i) => c === b.recentColors[i])
+    );
+  }
+
   async function persistDrawingPrefs() {
     if (!prefsDirty && !prefsSaveQueued) return;
     if (prefsSaveInFlight) {
@@ -141,25 +165,27 @@ export function usePrefsSync(deps: {
       return;
     }
     prefsSaveInFlight = true;
+    // 快照本次请求实际携带的值。此前成功后把"当前值"推进为基线——保存
+    // 在途时的新改动会被错误地标记为已落盘（磁盘=旧值、基线=新值），且
+    // 下次广播会把磁盘旧值反向采纳回会话，用户选择双重丢失。
+    const snapshot = readCurrentPrefs();
     try {
       await invoke("save_drawing_prefs", {
-        tool: deps.drawing.currentTool.value,
-        color: deps.drawing.currentColor.value,
-        lineWidths: {
-          stroke: deps.drawing.lineWidths.value.stroke,
-          highlighter: deps.drawing.lineWidths.value.highlighter,
-          eraser: deps.drawing.lineWidths.value.eraser,
-        },
-        recentColors: recentColors.value,
+        tool: snapshot.tool,
+        color: snapshot.color,
+        lineWidths: snapshot.lineWidths,
+        recentColors: snapshot.recentColors,
       });
-      // 基线推进到已落盘的会话值（下次广播与基线一致即视为无关）
+      // 基线只推进到已落盘的快照；当前值 ≠ 快照说明在途期间又有改动，
+      // 保持 dirty 由 queued 机制补存最新值
       baseline = {
-        defaultTool: deps.drawing.currentTool.value,
-        defaultColor: deps.drawing.currentColor.value,
-        lineWidths: { ...deps.drawing.lineWidths.value },
+        defaultTool: snapshot.tool,
+        defaultColor: snapshot.color,
+        lineWidths: { ...snapshot.lineWidths },
       };
-      prefsDirty = false;
+      prefsDirty = !samePrefs(readCurrentPrefs(), snapshot);
     } catch (err) {
+      // 保存失败：保持 dirty，下次改动/退出兜底时重试
       console.warn("[akimark] save_drawing_prefs failed", err);
     } finally {
       prefsSaveInFlight = false;

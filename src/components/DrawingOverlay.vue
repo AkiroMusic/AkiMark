@@ -307,6 +307,9 @@ watch(zoom, (z) => {
 // ---- 进行中标志 ----
 let pointerDown = false;
 let rmbErasing = false;
+/** 当前绘制指针的 id：多指针（数位笔+触控）时第二指针的 move/up 不得
+ * 干扰进行中的笔画（move 污染路径、up 提前结束笔画） */
+let activePointerId: number | null = null;
 /** 右键按住擦除前的工具：松开右键后恢复 */
 let prevToolBeforeRmb: Tool | null = null;
 let exportInFlight = false;
@@ -339,6 +342,7 @@ function onPointerDown(e: PointerEvent) {
   if (e.button === 2) {
     rmbErasing = true;
     strokeActive.value = true;
+    activePointerId = e.pointerId;
     // 右键橡皮同样冻结缩放锚点（与逆映射同源），否则放大态下擦除位置偏移
     zoomAnchor.value = { x: e.clientX, y: e.clientY };
     prevToolBeforeRmb = drawing.currentTool.value;
@@ -369,6 +373,7 @@ function onPointerDown(e: PointerEvent) {
 
   pointerDown = true;
   strokeActive.value = true;
+  activePointerId = e.pointerId;
   drawing.startDraw(e);
   capturePointer(e);
 }
@@ -400,10 +405,14 @@ function endPointerInteraction() {
   prevToolBeforeRmb = null;
   pointerDown = false;
   rmbErasing = false;
+  activePointerId = null;
   strokeActive.value = false;
 }
 
 function onPointerMove(e: PointerEvent) {
+  // 笔画进行中只接受同一指针：第二指针（触屏/第二支笔）的移动
+  // 不得污染路径，也不得移动光标视觉
+  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   cursor.x = e.clientX;
   cursor.y = e.clientY;
   requestCursorSync();
@@ -412,17 +421,21 @@ function onPointerMove(e: PointerEvent) {
   }
 }
 
-function onPointerUp(_e: PointerEvent) {
+function onPointerUp(e: PointerEvent) {
+  // 非当前绘制指针的抬起不结束笔画
+  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   endPointerInteraction();
 }
 
 /** 指针被系统取消（触控中断、窗口失焦等）：与 pointerup 同等结束笔画 */
-function onPointerCancel(_e: PointerEvent) {
+function onPointerCancel(e: PointerEvent) {
+  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   endPointerInteraction();
 }
 
 /** 窗口级兜底：指针捕获丢失时（如 WebView2 偶发丢捕获）确保笔画不悬挂 */
-function onWindowPointerUp() {
+function onWindowPointerUp(e: PointerEvent) {
+  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   endPointerInteraction();
 }
 
@@ -508,7 +521,8 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "m":
     case "M":
-      // 放大镜已并入屏幕缩放：M/Z 同键开关
+      // 放大镜已并入屏幕缩放：M/Z 同键开关；截屏底图前先提交在途笔画
+      commitActiveStroke();
       toggleZoom();
       break;
     case "z":
@@ -517,6 +531,7 @@ function onKeyDown(e: KeyboardEvent) {
         drawing.undo();
         showToast(t("action.undo"));
       } else {
+        commitActiveStroke();
         toggleZoom();
       }
       break;
@@ -589,9 +604,19 @@ function cycleColor(dir: 1 | -1) {
 // ---- 马赛克笔底图 ----
 let blurCaptureInFlight = false;
 
+/** 提交进行中的笔画（导出/复制/截屏底图前调用）：
+ * renderTo 只渲染已提交的 history，未提交的 currentAction 会缺席导出图，
+ * 且截图期间指针仍在移动 → 快照边界不确定。先提交再截屏，所见即所得。 */
+function commitActiveStroke() {
+  if (pointerDown || rmbErasing) {
+    endPointerInteraction();
+  }
+}
+
 /** 确保马赛克底图就绪：临时隐藏 UI → capture_screen → decode；黑板模式用板书纯色底 */
 async function ensureBlurBase() {
   if (drawing.hasBlurBase() || blurCaptureInFlight) return;
+  commitActiveStroke();
   // 黑板模式：不截屏，直接以板书纯色做马赛克底，避免马赛克暴露屏幕内容
   if (boardMode.value !== "none") {
     drawing.setBlurBaseColor(
@@ -634,6 +659,7 @@ async function ensureBlurBase() {
 async function exportScreenshot() {
   if (exportInFlight) return;
   exportInFlight = true;
+  commitActiveStroke();
   uiLocked = true;
   showToast(t("action.exporting"));
   try {
@@ -655,6 +681,7 @@ async function exportScreenshot() {
 async function copyAnnotation() {
   if (exportInFlight) return;
   exportInFlight = true;
+  commitActiveStroke();
   uiLocked = true;
   try {
     const composite = await composeExportCanvas();

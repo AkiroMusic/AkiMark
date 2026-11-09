@@ -102,4 +102,72 @@ describe("usePrefsSync 基线比对与按需落盘", () => {
     expect(invokeMock).not.toHaveBeenCalled();
     expect(drawing.lineWidths.value.stroke).toBe(7);
   });
+
+  it("快照语义：保存在途时的新改动最终落盘，不被标记为已保存", async () => {
+    let resolveFirst!: (v: unknown) => void;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    const { drawing, prefs } = setup();
+    prefs.applyConfig(makeConfig(3));
+    // 第一次保存：线宽 7（请求在途挂起）
+    drawing.lineWidths.value = { stroke: 7, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][1].lineWidths.stroke).toBe(7);
+    // 在途期间用户改到 8 → 防抖触发 → inFlight → 只能排队
+    drawing.lineWidths.value = { stroke: 8, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    // 第一次保存完成：不得把 8 标记为已落盘，必须补存
+    resolveFirst(undefined);
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls[1][1].lineWidths.stroke).toBe(8);
+    // 最终一致：磁盘最后写的是 8，此时无残余 dirty
+    invokeMock.mockClear();
+    prefs.flushPrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("快照语义：保存失败保持 dirty，下次 flush 重试", async () => {
+    invokeMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("disk full")),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { drawing, prefs } = setup();
+    prefs.applyConfig(makeConfig(3));
+    drawing.lineWidths.value = { stroke: 9, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    // 失败后再 flush（退出标注兜底）→ 必须重试
+    prefs.flushPrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls[1][1].lineWidths.stroke).toBe(9);
+    warnSpy.mockRestore();
+  });
+
+  it("快照语义：连续三次快速修改只落盘一次，携带最后一次的值", async () => {
+    const { drawing, prefs } = setup();
+    prefs.applyConfig(makeConfig(3));
+    drawing.lineWidths.value = { stroke: 5, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    vi.advanceTimersByTime(200);
+    drawing.lineWidths.value = { stroke: 6, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    vi.advanceTimersByTime(200);
+    drawing.lineWidths.value = { stroke: 8, highlighter: 10, eraser: 12 };
+    prefs.schedulePrefsSave();
+    await vi.runAllTimersAsync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][1].lineWidths.stroke).toBe(8);
+  });
 });

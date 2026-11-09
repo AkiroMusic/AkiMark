@@ -643,4 +643,45 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     flushRaf();
     expect(countCalls(previewCtx.ctx, "stroke")).toBe(strokesBefore);
   });
+
+  it("清屏取消进行中的笔画：松开后不复活，取消不进撤销栈", () => {
+    const { drawing } = setup();
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(30, 30));
+    drawing.clearAll(); // 拖拽中清屏
+    drawing.drawTo(pointer(50, 50)); // 清屏后继续移动
+    drawing.endDraw(); // 松开
+    expect(drawing.canClear.value).toBe(false);
+    // 取消的笔画从未提交，撤销栈为空
+    drawing.undo();
+    expect(drawing.canClear.value).toBe(false);
+  });
+
+  it("清屏取消进行中的笔画：history 为空时同样生效", () => {
+    const { drawing } = setup();
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(30, 30));
+    drawing.clearAll(); // history 空 → 旧实现早退不清 currentAction
+    drawing.endDraw();
+    expect(drawing.canClear.value).toBe(false);
+  });
+
+  it("橡皮拖拽中清屏：已提交笔画进撤销栈，被取消的橡皮笔画不复活", () => {
+    const { drawing } = setup();
+    drawing.startDraw(pointer(10, 10));
+    drawing.drawTo(pointer(40, 40));
+    drawing.endDraw(); // 已提交一笔
+    flushRaf();
+    drawing.currentTool.value = "eraser";
+    drawing.startDraw(pointer(20, 20));
+    drawing.drawTo(pointer(30, 30));
+    flushRaf(); // 增量擦除已应用到历史层
+    drawing.clearAll();
+    drawing.endDraw(); // 松开
+    // 撤销栈里只有 clear([strokeA])，没有被取消的橡皮笔画
+    drawing.undo();
+    expect(drawing.canClear.value).toBe(true);
+    drawing.redo();
+    expect(drawing.canClear.value).toBe(false);
+  });
 });
