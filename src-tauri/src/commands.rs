@@ -51,6 +51,20 @@ fn validate_general(general: &mut GeneralConfig) -> AppResult<()> {
     Ok(())
 }
 
+/// 延迟复位激活保护（capture_screen 专用）：隐藏→显示的 Focused(false)
+/// 事件是异步派发的，立即复位可能让"失焦自动穿透"误触发。所有退出路径
+/// （含 hide/show 失败的早退）都必须执行，否则 guard 卡死、自动穿透永久失效。
+fn spawn_guard_reset(app: &AppHandle) {
+    let app_for_thread = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            overlay::CAPTURE_GUARD_RESET_MS,
+        ));
+        let state = app_for_thread.state::<AppState>();
+        state.disarm_activation_guard();
+    });
+}
+
 /// 截取光标所在显示器的画面（PNG base64）。
 /// 前端会在调用前隐藏工具栏/光标/聚光灯等 UI；本命令负责隐藏 overlay 窗口本身，
 /// 确保截到纯净桌面底图，随后合成标注笔画并保存。
@@ -66,8 +80,12 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
+    // 隐藏失败就不能继续截图：截到的是带 overlay 自身 UI 的画面，
+    // 会污染缩放底图/马赛克底图/导出图（而非静默产出脏数据）。
     if let Err(e) = window.hide() {
         crate::log::log(&format!("capture_screen: 隐藏窗口失败: {e}"));
+        spawn_guard_reset(&app);
+        return Err(AppError::CaptureFailed);
     }
 
     // 给 DWM 一点时间完成隐藏合成，避免截到残留的半透明窗口
@@ -82,19 +100,21 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     if mode == OverlayMode::Hidden {
         crate::log::log("capture_screen: 截屏期间已退出标注模式，不重新显示窗口");
     } else if let Err(e) = window.show() {
-        crate::log::log(&format!("capture_screen: 重新显示窗口失败: {e}"));
+        // 重试一次（偶发的窗口被其他进程短暂占用）；仍失败则报错，
+        // 让前端知道"截图虽成功但窗口没能恢复"，而不是假装一切正常。
+        crate::log::log(&format!("capture_screen: 重新显示窗口失败（重试前）: {e}"));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Err(e2) = window.show() {
+            crate::log::log(&format!(
+                "capture_screen: 重新显示窗口重试仍失败: {e2}"
+            ));
+            spawn_guard_reset(&app);
+            return Err(AppError::CaptureFailed);
+        }
     }
 
-    // 延迟复位 guard：隐藏→显示的 Focused(false) 事件是异步派发的，
-    // 立即复位可能让"失焦自动穿透"误触发。150ms 后窗口已稳定聚焦。
-    let app_for_thread = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(
-            overlay::CAPTURE_GUARD_RESET_MS,
-        ));
-        let state = app_for_thread.state::<AppState>();
-        state.disarm_activation_guard();
-    });
+    // 延迟复位 guard：窗口已稳定聚焦后解除激活保护（见 spawn_guard_reset 注释）
+    spawn_guard_reset(&app);
 
     result
 }
@@ -291,8 +311,8 @@ pub fn get_shortcut_conflicts(app: AppHandle) -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn exit_drawing(app: AppHandle, state: State<'_, AppState>) {
-    let _ = overlay::deactivate_drawing(&app, &state);
+pub fn exit_drawing(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
+    overlay::deactivate_drawing(&app, &state)
 }
 
 #[tauri::command]
@@ -328,13 +348,20 @@ pub fn get_autostart(app: AppHandle) -> AppResult<bool> {
 }
 
 #[tauri::command]
-pub fn enter_penetration_mode(app: AppHandle, state: State<'_, AppState>) {
-    let _ = overlay::enter_penetration_mode(&app, &state);
+pub fn enter_penetration_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    // 不吞错：失败传回前端，乐观翻转才有回滚依据（useOverlayModes）
+    overlay::enter_penetration_mode(&app, &state)
 }
 
 #[tauri::command]
-pub fn exit_penetration_mode(app: AppHandle, state: State<'_, AppState>) {
-    let _ = overlay::exit_penetration_mode(&app, &state);
+pub fn exit_penetration_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    overlay::exit_penetration_mode(&app, &state)
 }
 
 /// 同步板书模式标志（前端在板书开关时调用）：板书期间穿透不可用，
@@ -345,26 +372,40 @@ pub fn set_board_active(state: State<'_, AppState>, active: bool) {
 }
 
 /// 窗口关闭请求：
-/// - overlay：阻止销毁，改为隐藏（常驻后台，毫秒级激活的前提）
+/// - overlay：阻止销毁，走完整退出流程（deactivate_drawing：释放 ClipCursor、
+///   mode=Hidden、板书复位、广播 hidden）——只裸 hide 会留下"光标仍被钳制、
+///   后端模式还是 Drawing"的分裂状态（Alt+F4 场景）
 /// - settings：允许关闭并销毁（用后即毁，不占资源）
 pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         if window.label() == OVERLAY_LABEL {
             api.prevent_close();
-            let _ = window.hide();
+            let app = window.app_handle();
+            let state = app.state::<AppState>();
+            if let Err(e) = overlay::deactivate_drawing(app, &state) {
+                crate::log::log(&format!(
+                    "handle_window_event: overlay 关闭转退出失败: {e}"
+                ));
+            }
         }
         // settings 窗口默认行为：关闭即销毁
     }
 }
 
 /// 失焦自动穿透：绘制中失去焦点 → 120ms 后若仍无焦点且非激活保护期，进入穿透模式。
-pub fn handle_focus_event(app: &AppHandle, event: &tauri::WindowEvent) {
+/// 只处理 overlay 自己的失焦事件：settings 等其他窗口的失焦与本逻辑无关
+///（此前不检查来源，关闭 settings 时会误触发自动穿透）。
+pub fn handle_focus_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if window.label() != OVERLAY_LABEL {
+        return;
+    }
     let tauri::WindowEvent::Focused(focused) = event else {
         return;
     };
     if *focused {
         return;
     }
+    let app = window.app_handle();
     let state = app.state::<AppState>();
     if state.activation_guard_active() {
         return;
@@ -412,7 +453,11 @@ pub fn handle_focus_event(app: &AppHandle, event: &tauri::WindowEvent) {
             if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
                 match w.is_focused() {
                     Ok(false) => {
-                        let _ = overlay::enter_penetration_mode(&app, &state);
+                        if let Err(e) = overlay::enter_penetration_mode(&app, &state) {
+                            crate::log::log(&format!(
+                                "handle_focus_event: 自动穿透失败: {e}"
+                            ));
+                        }
                     }
                     Ok(true) => {}
                     Err(e) => {

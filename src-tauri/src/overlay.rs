@@ -204,23 +204,19 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
 
 /// 进入穿透模式：标注保留可见，鼠标事件穿透到下方应用。
 pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
-    // 检查-设置原子化（持模式锁），并保证幂等：已在穿透模式直接返回。
-    let blocked = {
-        let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
-        if *m == OverlayMode::Penetration {
-            return Ok(());
-        }
-        if *m == OverlayMode::Hidden {
-            return Ok(());
-        }
-        // 板书模式期间穿透不可用：手动切换、全局热键、失焦自动穿透统一拒绝。
-        let blocked = state.board_active.load(Ordering::SeqCst);
-        if !blocked {
-            *m = OverlayMode::Penetration;
-        }
-        blocked
-    };
-    if blocked {
+    // 检查-执行-提交原子化：模式锁覆盖到 set_ignore_cursor_events 之后。
+    // 持锁跨 OS 调用是安全的：锁内只做窗口查找与 Win32 风格切换，
+    // 不会回调本项目代码、不会二次加锁。
+    // 此前"先提交 Penetration 再执行 OS 操作"在 set_ignore_cursor_events
+    // 失败时会把模式卡死在 Penetration（窗口实际仍拦截鼠标）。
+    let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+    // 幂等：已在穿透模式 / 隐藏状态直接返回
+    if *m == OverlayMode::Penetration || *m == OverlayMode::Hidden {
+        return Ok(());
+    }
+    // 板书模式期间穿透不可用：手动切换、全局热键、失焦自动穿透统一拒绝。
+    if state.board_active.load(Ordering::SeqCst) {
+        drop(m);
         // 通知前端弹提示（前端自身也会在板书模式下拦截 X/M 快捷键，这里兜底热键/自动穿透路径）
         let _ = app.emit("penetration-blocked", ());
         return Ok(());
@@ -231,7 +227,11 @@ pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> A
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
+    // 失败时经 `?` 返回：锁随 guard 释放，模式保持 Drawing，
+    // 错误传回调用方（前端据此回滚乐观状态）
     window.set_ignore_cursor_events(true)?;
+    *m = OverlayMode::Penetration;
+    drop(m);
     let _ = app.emit("overlay-mode-changed", "penetration");
     Ok(())
 }

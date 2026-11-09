@@ -128,7 +128,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .on_window_event(|window, event| {
             commands::handle_window_event(window, event);
-            commands::handle_focus_event(window.app_handle(), event);
+            commands::handle_focus_event(window, event);
         })
         .setup(|app| {
             log::init(app.handle());
