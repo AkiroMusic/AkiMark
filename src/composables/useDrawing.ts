@@ -594,10 +594,14 @@ export function useDrawing(
 
     const samples = ensureMosaicSamples(action);
     // 尾点补偿（transient）：路径末端与最后采样距离 >1 时补一块，
-    // 保证笔迹终点也有马赛克（弧长步进距终点可能残留 <1 步的缝隙）
+    // 保证笔迹终点也有马赛克（弧长步进距终点可能残留 <1 步的缝隙）。
+    // 达到硬上限后不再贴尾块：预览（不清屏追加）与提交后的全量重绘
+    // 都只有 5000 弧长块，两者逐像素一致；若尾块照贴，预览每帧继续
+    // 追加新位置尾块，与提交重绘产生视觉分歧且绕过采样上限。
     const last = action.points[action.points.length - 1];
     const tailSample = samples[samples.length - 1];
     const hasTail =
+      samples.length < MOSAIC_MAX_SAMPLES &&
       Math.hypot(last.x - tailSample.x, last.y - tailSample.y) > 1;
 
     const srcSize = cell * sourceScale;

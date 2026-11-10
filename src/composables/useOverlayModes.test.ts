@@ -126,7 +126,6 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
   });
 
   it("穿透态开启缩放：先等退出穿透完成，再截屏，最后才置倍率", async () => {
-    const hold = holdInvoke("exit_penetration_mode", "capture_screen");
     const { modes } = setup();
     await modes.togglePenetration();
     expect(modes.isPenetrating.value).toBe(true);

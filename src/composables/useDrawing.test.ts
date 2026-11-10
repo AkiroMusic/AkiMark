@@ -703,4 +703,25 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     expect(drawImage.mock.calls.length).toBeLessThanOrEqual(5001);
     expect(drawImage.mock.calls.length).toBeGreaterThan(0);
   });
+
+  it("达到采样硬上限后继续移动：预览 drawImage 调用数零增长（尾块一并封顶）", () => {
+    const { drawing, previewCtx } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(0, 0));
+    // 画到恰好触达 5000 上限（cell=3、步距 2.25 → 5000 块 ≈ 11250px）
+    drawing.drawTo(pointer(12000, 0));
+    flushRaf();
+    const drawImage = previewCtx.ctx.drawImage as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const atCap = drawImage.mock.calls.length;
+    expect(atCap).toBeGreaterThanOrEqual(4990); // 已达上限区
+    // 上限后继续移动：弧长采样与尾块都不再新增
+    drawing.drawTo(pointer(15000, 0));
+    flushRaf();
+    drawing.drawTo(pointer(18000, 0));
+    flushRaf();
+    expect(previewCtx.ctx.drawImage).toHaveBeenCalledTimes(atCap);
+  });
 });

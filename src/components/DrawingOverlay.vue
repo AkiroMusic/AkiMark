@@ -436,22 +436,48 @@ function onPointerMove(e: PointerEvent) {
   }
 }
 
+/** 笔画收尾公共路径：匹配指针的最终位置先补一次采样再结束。
+ * 最后一次位移可能只体现在 PointerUp（无对应 PointerMove），不补采样
+ * 则形状工具终点偏离实际释放位置、自由笔丢失尾点。drawTo 自带最小
+ * 距离过滤与增量渲染，重复调用安全。 */
+function finishStrokeWithPointer(e: PointerEvent) {
+  drawing.drawTo(e);
+  endPointerInteraction();
+}
+
 function onPointerUp(e: PointerEvent) {
   // 非当前绘制指针的抬起不结束笔画
+  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
+  if (pointerDown || rmbErasing) {
+    finishStrokeWithPointer(e);
+  } else {
+    endPointerInteraction();
+  }
+}
+
+/** 指针被系统取消（触控中断、窗口失焦等）：与 pointerup 同等结束笔画。
+ * 坐标不可靠，只结束不补采样。 */
+function onPointerCancel(e: PointerEvent) {
   if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
   endPointerInteraction();
 }
 
-/** 指针被系统取消（触控中断、窗口失焦等）：与 pointerup 同等结束笔画 */
-function onPointerCancel(e: PointerEvent) {
-  if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
+/** 指针捕获丢失（WebView2 偶发）：防笔画悬挂；正常 pointerup 先于隐式
+ * 捕获释放发生，走到这里时笔画已结束，天然幂等。 */
+function onLostPointerCapture(e: PointerEvent) {
+  if (!pointerDown && !rmbErasing) return;
+  if (e.pointerId !== activePointerId) return;
   endPointerInteraction();
 }
 
 /** 窗口级兜底：指针捕获丢失时（如 WebView2 偶发丢捕获）确保笔画不悬挂 */
 function onWindowPointerUp(e: PointerEvent) {
   if ((pointerDown || rmbErasing) && e.pointerId !== activePointerId) return;
-  endPointerInteraction();
+  if (pointerDown || rmbErasing) {
+    finishStrokeWithPointer(e);
+  } else {
+    endPointerInteraction();
+  }
 }
 
 function onPointerEnter() {
@@ -929,6 +955,7 @@ onBeforeUnmount(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
+    @lostpointercapture="onLostPointerCapture"
     @pointerenter="onPointerEnter"
     @pointerleave="onPointerLeave"
     @contextmenu.prevent
