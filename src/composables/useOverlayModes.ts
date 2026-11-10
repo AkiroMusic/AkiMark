@@ -40,6 +40,8 @@ export function useOverlayModes(deps: {
   beforeCapture?: () => void;
 }) {
   const showToolbar = ref(false);
+  /** dispatch 单调递增版本号：runEffects 据此丢弃过期 dispatch 的后续副作用 */
+  let dispatchRevision = 0;
   const isPenetrating = ref(false);
   const spotlight = ref(false);
   const spotlightRadius = ref(SPOTLIGHT.initial);
@@ -81,9 +83,10 @@ export function useOverlayModes(deps: {
    *
    * 串行保证的边界（不引入事务队列是设计取舍）：单次 dispatch 内的 effects
    * 严格按序 await；并发 dispatch（如热键与指针入口同时触发）在 await 点
-   * 仍可交错——同步裁决段（snapshot → writeBack）每次 dispatch 原子执行，
-   * 副作用串行是 per-dispatch 保证而非全局串行。入口已由 uiLocked/互斥规则
-   * 门控，跨入口的冲突意图由 modeMutex 裁决。
+   * 仍可交错——同步裁决段（snapshot → writeBack）每次 dispatch 原子执行。
+   * 跨 dispatch 的过期提交由 revision 守卫阻止（见 dispatch）：被更新操作
+   * 取代的旧 dispatch 完成已在途的 effect 后，不再提交后续副作用、也不再
+   * 执行回滚（回滚新操作已接管的状态是二次破坏）。
    *
    * 失败语义分野：togglePenetration 路径回滚乐观状态并 toast；
    * 其余路径仅 console.warn（以后端为准，前端不盲目回滚），
@@ -93,11 +96,14 @@ export function useOverlayModes(deps: {
     effects: ModeEffect[],
     penetrationAwaited: boolean,
     prev?: ModeState,
+    isCurrent?: () => boolean,
   ) {
     // 本批 effects 中退出穿透的结果：null = 未涉及；true/false = invoke 成败。
     // 供 setBoardActive 失败回滚判定后端真实模式（四轮审查 P2-01）。
     let exitPenetrationOk: boolean | null = null;
     for (const fx of effects) {
+      // 过期 dispatch：让已在途的 effect 完成后就此打住——新操作已接管状态
+      if (isCurrent && !isCurrent()) return;
       switch (fx.type) {
         case "toast":
           deps.showToast(deps.t(`action.${fx.key}`));
@@ -118,7 +124,8 @@ export function useOverlayModes(deps: {
           } catch (err) {
             exitPenetrationOk = false;
             console.warn(`[akimark] ${cmd} failed`, err);
-            if (penetrationAwaited) {
+            // 过期 dispatch 不回滚：新操作已接管状态，回滚是二次破坏
+            if (penetrationAwaited && (!isCurrent || isCurrent())) {
               // 回滚乐观翻转，避免 UI 与后端穿透状态不一致
               isPenetrating.value = !isPenetrating.value;
               deps.showToast(deps.t("action.penetrationFailed"));
@@ -133,11 +140,12 @@ export function useOverlayModes(deps: {
             await invoke("set_board_active", { active: fx.active });
           } catch (err) {
             console.warn("[akimark] set_board_active failed", err);
-            // IPC 失败：回滚 boardMode 与马赛克底色，板书 UI 与后端标志一致。
-            // 同批的退出穿透也失败时（后端 set_board_active 在退出失败时
-            // 拒绝置位，二者同败），后端仍是穿透态——连穿透 UI 一起恢复；
-            // 退出成功仅板书传输失败时后端已是 Drawing，恢复穿透反而错误。
-            if (prev) {
+            // 过期 dispatch 不回滚（同上）；IPC 失败：回滚 boardMode 与
+            // 马赛克底色，板书 UI 与后端标志一致。同批的退出穿透也失败时
+            //（后端 set_board_active 在退出失败时拒绝置位，二者同败），
+            // 后端仍是穿透态——连穿透 UI 一起恢复；退出成功仅板书传输
+            // 失败时后端已是 Drawing，恢复穿透反而错误。
+            if (prev && (!isCurrent || isCurrent())) {
               boardMode.value = prev.board;
               deps.drawing.setBlurBaseColor(
                 prev.board === "none" ? null : BOARD_COLORS[prev.board],
@@ -173,12 +181,21 @@ export function useOverlayModes(deps: {
   }
 
   async function dispatch(action: ModeAction) {
+    // revision 守卫（五轮审查 P2-01）：并发 dispatch 在 await 点交错时，
+    // 被更新的 dispatch 取代的旧操作不得继续提交副作用或回滚——否则
+    // "穿透态连按 B×2"会让旧 dispatch 在恢复执行后把板书标志重新打开
+    const revision = ++dispatchRevision;
     const prev = snapshot();
     const { state, effects } = applyModeAction(prev, action, {
       boardDefault: deps.boardDefault.value,
     });
     writeBack(state);
-    await runEffects(effects, action.type === "togglePenetration", prev);
+    await runEffects(
+      effects,
+      action.type === "togglePenetration",
+      prev,
+      () => revision === dispatchRevision,
+    );
   }
 
   /** 开启缩放的截屏流程：提交在途笔画 → 隐藏 UI → capture → Blob URL → 置倍率 */
