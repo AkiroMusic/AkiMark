@@ -345,21 +345,75 @@ pub fn toggle_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) {
 /// 转换互斥——若并发交错使带锁的进入穿透在标志置位前读取，此处收尾保证
 /// `board_active=true` 与 `OverlayMode::Penetration` 不会同时成立
 ///（原子退出穿透后再置位，三轮审查 P2-01）。
-pub fn set_board_active(app: &AppHandle, state: &State<'_, AppState>, active: bool) {
+/// 退出穿透失败时整体失败且标志不提交（四轮审查 P2-01），错误传回前端。
+pub fn set_board_active(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    active: bool,
+) -> AppResult<()> {
     let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
-    if active && *m == OverlayMode::Penetration {
-        if let Err(e) = exit_penetration_locked(app, &mut m) {
-            crate::log::log(&format!(
-                "set_board_active: 退出穿透失败（板书标志照常置位）: {e}"
-            ));
-        }
+    set_board_active_locked(&mut m, &state.board_active, active, |m| {
+        exit_penetration_locked(app, m)
+    })
+}
+
+/// 板书置位协调核心（纯逻辑，测试可注入退出穿透闭包，无需 mock tauri）。
+/// 置位 true 且已处于穿透时先原子退出穿透：退出失败则整体失败，
+/// 板书标志不得提交（否则 `board_active=true ∧ Penetration` 同时成立，
+/// 与 enter_penetration_locked 的拒绝检查合起来构成完整互斥）。
+fn set_board_active_locked(
+    mode: &mut OverlayMode,
+    board_active: &AtomicBool,
+    active: bool,
+    exit_penetration: impl FnOnce(&mut OverlayMode) -> AppResult<()>,
+) -> AppResult<()> {
+    if active && *mode == OverlayMode::Penetration {
+        exit_penetration(mode)?;
     }
-    state.board_active.store(active, Ordering::SeqCst);
+    board_active.store(active, Ordering::SeqCst);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AppError;
+
+    #[test]
+    fn board_activation_requires_penetration_exit_success() {
+        // 置位板书时已处于穿透：退出穿透失败 → 整体失败，
+        // 模式保持 Penetration、标志不得提交（board_active=true ∧
+        // Penetration 不得同时成立，四轮审查 P2-01）
+        let mode = &mut OverlayMode::Penetration;
+        let flag = AtomicBool::new(false);
+        let err = set_board_active_locked(mode, &flag, true, |_| Err(AppError::CaptureFailed));
+        assert!(err.is_err(), "退出穿透失败应整体失败");
+        assert_eq!(*mode, OverlayMode::Penetration, "模式不得被改动");
+        assert!(!flag.load(Ordering::SeqCst), "失败时标志不得置位");
+
+        // 成功路径：模式先转为 Drawing，标志才置位
+        set_board_active_locked(mode, &flag, true, |m| {
+            *m = OverlayMode::Drawing;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(*mode, OverlayMode::Drawing);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn board_deactivation_does_not_attempt_penetration_exit() {
+        // 退板书（active=false）与穿透无交互：不触发退出穿透闭包，
+        // 仅复位标志（后端竞态下退板书到达时可能已是 Penetration）
+        let mode = &mut OverlayMode::Penetration;
+        let flag = AtomicBool::new(true);
+        set_board_active_locked(mode, &flag, false, |_| -> AppResult<()> {
+            panic!("deactivate 不应触发退出穿透");
+        })
+        .unwrap();
+        assert!(!flag.load(Ordering::SeqCst));
+        assert_eq!(*mode, OverlayMode::Penetration);
+    }
 
     #[test]
     fn activation_guard_counter_overlap() {
