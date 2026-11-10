@@ -361,9 +361,10 @@ pub fn exit_penetration_mode(app: AppHandle, state: State<'_, AppState>) -> AppR
 
 /// 同步板书模式标志（前端在板书开关时调用）：板书期间穿透不可用，
 /// 全局热键/失焦自动穿透/手动切换一律被后端拒绝。
+/// 与模式转换共用同一把模式锁；置位时若已处于穿透则原子退出穿透。
 #[tauri::command]
-pub fn set_board_active(state: State<'_, AppState>, active: bool) {
-    overlay::set_board_active(&state, active);
+pub fn set_board_active(app: AppHandle, state: State<'_, AppState>, active: bool) {
+    overlay::set_board_active(&app, &state, active);
 }
 
 /// 窗口关闭请求：
