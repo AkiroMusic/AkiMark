@@ -103,22 +103,20 @@ impl serde::Serialize for AppError {
 mod tests {
     use super::*;
 
+    /// 合并为单条顺序测试：两条测试并行运行时各自 set→断言→set 会争用全局
+    /// ERROR_LOCALE_EN，交错时对方断言读到错误 locale（CI 偶发失败的根因）。
     #[test]
-    fn localized_switches_with_locale() {
-        let err = AppError::CaptureFailed;
-        assert_eq!(err.to_string(), "截图失败");
-        set_error_locale("en");
-        assert_eq!(err.localized(), "Screen capture failed");
-        set_error_locale("zh-CN");
-        assert_eq!(err.localized(), "截图失败");
-    }
+    fn error_locale_switch_and_localize() {
+        // Display 恒中文（日志面），不受 locale 影响
+        assert_eq!(AppError::CaptureFailed.to_string(), "截图失败");
 
-    #[test]
-    fn dynamic_variants_localize() {
         let err = AppError::InvalidTool("bogus".into());
         set_error_locale("en");
+        assert_eq!(AppError::CaptureFailed.localized(), "Screen capture failed");
         assert_eq!(err.localized(), "Invalid tool: bogus");
+
         set_error_locale("zh-CN");
+        assert_eq!(AppError::CaptureFailed.localized(), "截图失败");
         assert_eq!(err.localized(), "无效的工具: bogus");
     }
 }
