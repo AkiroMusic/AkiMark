@@ -1,18 +1,21 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::config::{
-    self, clamp_line_widths, AppConfig, GeneralConfig, LineWidthsConfig, Shortcuts, KNOWN_TOOLS,
+    self, clamp_line_widths, is_hex_color, normalize_general_fields, AppConfig, GeneralConfig,
+    LineWidthsConfig, Shortcuts, KNOWN_TOOLS,
 };
 use crate::error::{AppError, AppResult};
 use crate::overlay::{self, AppState, OverlayMode, OVERLAY_LABEL};
 use crate::shortcuts;
 
-/// 后端校验 save_general 的输入：工具集合、线宽范围、导出目录合法性。
+/// 后端校验 save_general 的输入：工具集合报错，其余业务字段统一修复
+///（与 load_config 的 normalize_general_fields 同一来源，保存值与
+/// 下次启动归一后的值一致）。
 fn validate_general(general: &mut GeneralConfig) -> AppResult<()> {
     if !KNOWN_TOOLS.contains(&general.default_tool.as_str()) {
         return Err(AppError::InvalidTool(general.default_tool.clone()));
     }
-    clamp_line_widths(&mut general.line_widths);
+    normalize_general_fields(general);
     if let Some(dir) = &general.export_dir {
         if !dir.trim().is_empty() {
             let p = std::path::Path::new(dir);
@@ -260,11 +263,14 @@ pub fn save_drawing_prefs(
         return Err(AppError::InvalidTool(tool));
     }
     clamp_line_widths(&mut line_widths);
-    // 最近自定义色：最多保留 4 个，单个长度钳制（防御异常 payload）
+    if !is_hex_color(&color) {
+        return Err(AppError::InvalidColor(color));
+    }
+    // 最近自定义色：最多保留 4 个，非法 hex 过滤 + 单个长度钳制（防御异常 payload）
     let recent_colors = match recent_colors {
         Some(colors) => colors
             .into_iter()
-            .filter(|c| !c.trim().is_empty())
+            .filter(|c| is_hex_color(c))
             .map(|c| c.chars().take(32).collect::<String>())
             .take(4)
             .collect::<Vec<String>>(),

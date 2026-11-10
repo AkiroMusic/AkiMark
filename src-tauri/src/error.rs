@@ -48,6 +48,9 @@ pub enum AppError {
     /// 未知的绘制工具
     #[error("无效的工具: {0}")]
     InvalidTool(String),
+    /// 非法 HEX 颜色（仅接受 #RGB / #RRGGBB / #RRGGBBAA）
+    #[error("无效的颜色: {0}")]
+    InvalidColor(String),
     /// 同一集合内重复的快捷键绑定
     #[error("重复的快捷键: {0}")]
     DuplicateShortcut(String),
@@ -78,6 +81,7 @@ impl AppError {
             AppError::ExportTooLarge(n) => format!("Export data too large (limit {n} bytes)"),
             AppError::InvalidExportDir(d) => format!("Invalid export folder: {d}"),
             AppError::InvalidTool(t) => format!("Invalid tool: {t}"),
+            AppError::InvalidColor(c) => format!("Invalid color: {c}"),
             AppError::DuplicateShortcut(s) => format!("Duplicate shortcut: {s}"),
             AppError::Clipboard(e) => format!("Failed to write to clipboard: {e}"),
         }

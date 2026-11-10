@@ -192,18 +192,17 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> AppResult<()> 
     Ok(())
 }
 
-/// 宽松的 HEX 颜色校验（#RGB / #RRGGBB / #RRGGBBAA）
-fn is_hex_color(s: &str) -> bool {
-    s.len() >= 4 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+/// 严格 HEX 颜色校验：仅 #RGB / #RRGGBB / #RRGGBBAA
+pub fn is_hex_color(s: &str) -> bool {
+    matches!(s.len(), 4 | 7 | 9)
+        && s.starts_with('#')
+        && s[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// 手改配置的字段级归一：非法值回退默认，而不是丢掉整份配置。
-/// load_config 反序列化成功后调用；save 路径沿用逐项校验报错。
-pub fn normalize_config(cfg: &mut AppConfig) {
-    let g = &mut cfg.general;
-    if !KNOWN_TOOLS.contains(&g.default_tool.as_str()) {
-        g.default_tool = "pen".into();
-    }
+/// 业务字段级修复（不含 defaultTool——它由调用方按场景决定报错还是回退）。
+/// 两个消费方：normalize_config（启动加载，静默回退）与 validate_general
+///（保存入口，工具字段报错后其余字段同样修复）。
+pub fn normalize_general_fields(g: &mut GeneralConfig) {
     if !is_hex_color(&g.default_color) {
         g.default_color = "#6C8CFF".into();
     }
@@ -221,6 +220,16 @@ pub fn normalize_config(cfg: &mut AppConfig) {
         .map(|c| c.chars().take(32).collect::<String>())
         .take(4)
         .collect();
+}
+
+/// 手改配置的字段级归一：非法值回退默认，而不是丢掉整份配置。
+/// load_config 反序列化成功后调用。
+pub fn normalize_config(cfg: &mut AppConfig) {
+    let g = &mut cfg.general;
+    if !KNOWN_TOOLS.contains(&g.default_tool.as_str()) {
+        g.default_tool = "pen".into();
+    }
+    normalize_general_fields(g);
 }
 
 /// 广播配置变更给所有窗口
@@ -389,5 +398,25 @@ mod tests {
         assert!(!is_hex_color("6C8CFF")); // 缺 #
         assert!(!is_hex_color("#"));
         assert!(!is_hex_color("#zzzzzz")); // 非 hex 字符
+        assert!(!is_hex_color("#12345")); // 非法长度（5）
+        assert!(!is_hex_color("#1234567")); // 非法长度（7 位数字）
+        assert!(!is_hex_color("#123456789")); // 非法长度（9 位数字）
+    }
+
+    #[test]
+    fn normalize_general_fields_repairs_without_tool() {
+        // 与 normalize_config 共用的字段修复：defaultTool 之外的字段
+        let mut cfg = AppConfig::default();
+        cfg.general.default_tool = "pen".into(); // 调用方负责工具字段
+        cfg.general.default_color = "notahex".into();
+        cfg.general.board_default = "purple".into();
+        cfg.general.locale = "fr".into();
+        cfg.general.recent_colors = vec!["#abc".into(), "zzz".into()];
+        normalize_general_fields(&mut cfg.general);
+        assert_eq!(cfg.general.default_tool, "pen");
+        assert_eq!(cfg.general.default_color, "#6C8CFF");
+        assert_eq!(cfg.general.board_default, "white");
+        assert_eq!(cfg.general.locale, "zh-CN");
+        assert_eq!(cfg.general.recent_colors, vec!["#abc"]);
     }
 }

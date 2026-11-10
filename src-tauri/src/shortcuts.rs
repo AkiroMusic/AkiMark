@@ -215,9 +215,20 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
         }
     }
 
-    // 若有回滚（冲突项恢复旧值/清空），重新落盘保持磁盘与内存一致
+    // 若有回滚（冲突项恢复旧值/清空），重新落盘保持磁盘与内存一致。
+    // 回滚落盘失败重试一次：再失败时磁盘暂留新快捷键、运行时已是旧值，
+    // 两者不一致但下次任何成功的配置保存会以内存为准自愈（自愈性质，
+    // 不为极端磁盘故障引入更复杂的事务机制）；运行时与内存始终一致。
     if !conflicts.is_empty() {
-        crate::config::save_config(app, &new_config)?;
+        if let Err(e) = crate::config::save_config(app, &new_config) {
+            crate::log::log(&format!("save_shortcuts: 回滚落盘失败（重试前）: {e}"));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Err(e2) = crate::config::save_config(app, &new_config) {
+                crate::log::log(&format!(
+                    "save_shortcuts: 回滚落盘重试仍失败（磁盘暂留新值，待下次保存自愈）: {e2}"
+                ));
+            }
+        }
     }
 
     // 更新内存配置并广播
