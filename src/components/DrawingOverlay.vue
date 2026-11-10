@@ -205,6 +205,7 @@ const modes = useOverlayModes({
   textEditing,
   boardDefault,
   strokeActive,
+  beforeCapture: commitActiveStroke,
 });
 const {
   showToolbar,
@@ -546,8 +547,7 @@ function onKeyDown(e: KeyboardEvent) {
       break;
     case "m":
     case "M":
-      // 放大镜已并入屏幕缩放：M/Z 同键开关；截屏底图前先提交在途笔画
-      commitActiveStroke();
+      // 放大镜已并入屏幕缩放：M/Z 同键开关（在途笔画由 beforeCapture 提交）
       toggleZoom();
       break;
     case "z":
@@ -556,7 +556,6 @@ function onKeyDown(e: KeyboardEvent) {
         drawing.undo();
         showToast(t("action.undo"));
       } else {
-        commitActiveStroke();
         toggleZoom();
       }
       break;

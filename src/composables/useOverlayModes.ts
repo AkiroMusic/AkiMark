@@ -35,6 +35,8 @@ export function useOverlayModes(deps: {
   boardDefault: Ref<"white" | "black">;
   /** 缩放视觉原点在笔画进行中锁定为冻结锚点（与逆映射同源） */
   strokeActive: Ref<boolean>;
+  /** 截屏入口统一前置钩子（提交在途笔画）：工具栏/键盘/未来任何缩放入口共享 */
+  beforeCapture?: () => void;
 }) {
   const showToolbar = ref(false);
   const isPenetrating = ref(false);
@@ -71,7 +73,14 @@ export function useOverlayModes(deps: {
     showToolbar.value = s.toolbarVisible;
   }
 
-  /** 执行 effects。penetrationAwaited=true 时穿透 invoke 走 await+回滚路径 */
+  /**
+   * 执行 effects。全部 await：模式转换的副作用串行完成后切换才算完成——
+   * 退出穿透的 IPC 未完成就开始截屏、板书标志未确认就允许下一模式操作，
+   * 这类交错是二轮审查指出的竞态源。入口已由 uiLocked/互斥规则门控，
+   * await 之后交错即为确定性串行（不引入额外的事务队列）。
+   * 失败语义分野保留：togglePenetration 路径回滚乐观状态并 toast；
+   * 其余路径仅 console.warn（以后端为准，前端不盲目回滚）。
+   */
   async function runEffects(
     effects: ModeEffect[],
     penetrationAwaited: boolean,
@@ -87,30 +96,30 @@ export function useOverlayModes(deps: {
             fx.type === "invokeEnterPenetration"
               ? "enter_penetration_mode"
               : "exit_penetration_mode";
-          if (penetrationAwaited) {
-            try {
-              await invoke(cmd);
-              // 既有行为：穿透切换成功后隐藏工具栏（穿透中不可交互）
-              showToolbar.value = false;
-            } catch (err) {
-              console.warn(`[akimark] ${cmd} failed`, err);
+          try {
+            await invoke(cmd);
+            // 进入穿透：工具栏隐藏（穿透中不可交互）；退出穿透：工具栏恢复。
+            // 此前共用分支无条件隐藏、退出依赖后端 drawing-return 事件恢复，
+            // 事件与 IPC resolve 的顺序竞争会把工具栏留在隐藏态。
+            showToolbar.value = fx.type === "invokeExitPenetration";
+          } catch (err) {
+            console.warn(`[akimark] ${cmd} failed`, err);
+            if (penetrationAwaited) {
               // 回滚乐观翻转，避免 UI 与后端穿透状态不一致
               isPenetrating.value = !isPenetrating.value;
               deps.showToast(deps.t("action.penetrationFailed"));
             }
-          } else {
-            void invoke(cmd).catch((err) => {
-              console.warn(`[akimark] ${cmd} failed`, err);
-            });
           }
           break;
         }
         case "setBoardActive":
-          void invoke("set_board_active", { active: fx.active }).catch(
-            (err) => {
-              console.warn("[akimark] set_board_active failed", err);
-            },
-          );
+          // await：板书标志经后端确认后板书才算切换完成（否则紧随其后的
+          // 全局穿透热键可能读到未更新的标志而绕过板书保护）
+          try {
+            await invoke("set_board_active", { active: fx.active });
+          } catch (err) {
+            console.warn("[akimark] set_board_active failed", err);
+          }
           break;
         case "setBoardColor":
           deps.drawing.setBlurBaseColor(
@@ -143,8 +152,12 @@ export function useOverlayModes(deps: {
     await runEffects(effects, action.type === "togglePenetration");
   }
 
-  /** 开启缩放的截屏流程：隐藏 UI → capture → base64 转 Blob URL → 置倍率 */
+  /** 开启缩放的截屏流程：提交在途笔画 → 隐藏 UI → capture → Blob URL → 置倍率 */
   async function captureZoomBackground() {
+    // 统一入口提交在途笔画：renderTo 只渲染已提交 history，未提交笔画
+    // 会缺席缩放底图；此前只有键盘 M/Z 路径做了提交，工具栏按钮没有
+    deps.beforeCapture?.();
+
     const prevToolbar = showToolbar.value;
     showToolbar.value = false;
     deps.textEditing.value = null;
@@ -245,15 +258,16 @@ export function useOverlayModes(deps: {
     zoom,
     zoomBg,
     zoomAnchor,
-    // 动作（组件层快捷键/工具栏直接调用）
+    // 动作（组件层快捷键/工具栏直接调用）。统一返回 Promise：副作用
+    // 全 await 后，调用方（需要时）可等待模式切换真正完成；不需要时
+    // 忽略返回值即可
     toggleZoom: () => dispatch({ type: "toggleZoom" }),
-    toggleSpotlight: () => void dispatch({ type: "toggleSpotlight" }),
-    cycleBoard: () => void dispatch({ type: "toggleBoard" }),
+    toggleSpotlight: () => dispatch({ type: "toggleSpotlight" }),
+    cycleBoard: () => dispatch({ type: "toggleBoard" }),
     togglePenetration: () => dispatch({ type: "togglePenetration" }),
-    stepBack: () => void dispatch({ type: "stepBack" }),
+    stepBack: () => dispatch({ type: "stepBack" }),
     /** 工具栏退出按钮：直接退出标注（不经 Esc 逐级） */
-    exitAnnotation: () =>
-      void runEffects([{ type: "invokeExitAnnotation" }], false),
+    exitAnnotation: () => runEffects([{ type: "invokeExitAnnotation" }], false),
     toggleToolbarWithSpace,
     onWheel,
     resetModes,
