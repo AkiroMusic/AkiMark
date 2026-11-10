@@ -54,6 +54,9 @@ pub enum AppError {
     /// 同一集合内重复的快捷键绑定
     #[error("重复的快捷键: {0}")]
     DuplicateShortcut(String),
+    /// 当前模式状态不允许的操作（如隐藏状态下置位板书标志）
+    #[error("当前状态不允许该操作: {0}")]
+    InvalidState(String),
     /// 剪贴板写入失败（插件错误）
     #[error("写入剪贴板失败: {0}")]
     Clipboard(String),
@@ -83,6 +86,7 @@ impl AppError {
             AppError::InvalidTool(t) => format!("Invalid tool: {t}"),
             AppError::InvalidColor(c) => format!("Invalid color: {c}"),
             AppError::DuplicateShortcut(s) => format!("Duplicate shortcut: {s}"),
+            AppError::InvalidState(s) => format!("Operation not allowed in current state: {s}"),
             AppError::Clipboard(e) => format!("Failed to write to clipboard: {e}"),
         }
     }

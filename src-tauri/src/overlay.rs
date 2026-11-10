@@ -292,6 +292,14 @@ fn enter_penetration_locked(
         let _ = app.emit("penetration-blocked", ());
         return Ok(());
     }
+    // 截屏生命周期（五轮审查 P2-02）：截屏期间进入穿透会让穿透事件先到
+    // 清零 zoom、截图 IPC 返回后又无条件重开倍率 → "穿透 ∧ 缩放"并存，
+    // 违反 modeMutex 互斥。与激活同策略：no-op，截屏结束后再按一次即可
+    //（前端 X 被 uiLocked 门控，此窗口内只有全局热键可达）。
+    if state.capture_in_progress.load(Ordering::SeqCst) {
+        crate::log::log("enter_penetration_mode: 截屏进行中，暂缓进入穿透");
+        return Ok(());
+    }
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
@@ -378,6 +386,8 @@ pub fn set_board_active(
 /// 置位 true 且已处于穿透时先原子退出穿透：退出失败则整体失败，
 /// 板书标志不得提交（否则 `board_active=true ∧ Penetration` 同时成立，
 /// 与 enter_penetration_locked 的拒绝检查合起来构成完整互斥）。
+/// 隐藏状态下拒绝置位（五轮审查 P2-01）：迟到的置位请求不得在
+/// deactivate_drawing 复位标志后又把它打开。
 fn set_board_active_locked(
     mode: &mut OverlayMode,
     board_active: &AtomicBool,
@@ -386,6 +396,11 @@ fn set_board_active_locked(
 ) -> AppResult<()> {
     if active && *mode == OverlayMode::Penetration {
         exit_penetration(mode)?;
+    }
+    if active && *mode == OverlayMode::Hidden {
+        return Err(crate::error::AppError::InvalidState(
+            "cannot activate board while overlay is hidden".into(),
+        ));
     }
     board_active.store(active, Ordering::SeqCst);
     Ok(())
@@ -430,6 +445,24 @@ mod tests {
         .unwrap();
         assert!(!flag.load(Ordering::SeqCst));
         assert_eq!(*mode, OverlayMode::Penetration);
+    }
+
+    #[test]
+    fn board_activation_rejected_while_hidden() {
+        // 隐藏状态下拒绝置位（五轮审查 P2-01）：迟到的置位请求不得在
+        // deactivate 复位标志后又把它打开；闭包不得被调用
+        let mode = &mut OverlayMode::Hidden;
+        let flag = AtomicBool::new(false);
+        let err = set_board_active_locked(mode, &flag, true, |_| -> AppResult<()> {
+            panic!("Hidden 状态不应触发退出穿透闭包");
+        });
+        assert!(err.is_err(), "Hidden 下置位板书应被拒绝");
+        assert!(
+            matches!(err, Err(AppError::InvalidState(_))),
+            "应返回 InvalidState，得到 {err:?}"
+        );
+        assert!(!flag.load(Ordering::SeqCst), "标志不得置位");
+        assert_eq!(*mode, OverlayMode::Hidden);
     }
 
     #[test]
