@@ -208,4 +208,23 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(modes.boardMode.value).toBe("none");
     expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
   });
+
+  it("穿透中开板书且退出穿透+置位双失败：板书与穿透 UI 全部回滚（四轮审查 P2-01）", async () => {
+    // 后端语义：退出穿透失败时 set_board_active 拒绝置位 → 二者同败，
+    // 后端仍是穿透态 → 前端除板书外还要恢复 isPenetrating / showToolbar
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "exit_penetration_mode" || cmd === "set_board_active"
+        ? Promise.reject(new Error("os failed"))
+        : Promise.resolve({}),
+    );
+    const { modes, drawing } = setup();
+    await modes.togglePenetration(); // 进入穿透成功
+    expect(modes.isPenetrating.value).toBe(true);
+    expect(modes.showToolbar.value).toBe(false);
+    await modes.cycleBoard(); // 开板书：退出穿透失败 → 置位被拒
+    expect(modes.boardMode.value).toBe("none");
+    expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
+    expect(modes.isPenetrating.value).toBe(true);
+    expect(modes.showToolbar.value).toBe(false);
+  });
 });

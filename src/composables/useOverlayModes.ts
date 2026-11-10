@@ -94,6 +94,9 @@ export function useOverlayModes(deps: {
     penetrationAwaited: boolean,
     prev?: ModeState,
   ) {
+    // 本批 effects 中退出穿透的结果：null = 未涉及；true/false = invoke 成败。
+    // 供 setBoardActive 失败回滚判定后端真实模式（四轮审查 P2-01）。
+    let exitPenetrationOk: boolean | null = null;
     for (const fx of effects) {
       switch (fx.type) {
         case "toast":
@@ -111,7 +114,9 @@ export function useOverlayModes(deps: {
             // 此前共用分支无条件隐藏、退出依赖后端 drawing-return 事件恢复，
             // 事件与 IPC resolve 的顺序竞争会把工具栏留在隐藏态。
             showToolbar.value = fx.type === "invokeExitPenetration";
+            exitPenetrationOk = fx.type === "invokeExitPenetration";
           } catch (err) {
+            exitPenetrationOk = false;
             console.warn(`[akimark] ${cmd} failed`, err);
             if (penetrationAwaited) {
               // 回滚乐观翻转，避免 UI 与后端穿透状态不一致
@@ -128,12 +133,19 @@ export function useOverlayModes(deps: {
             await invoke("set_board_active", { active: fx.active });
           } catch (err) {
             console.warn("[akimark] set_board_active failed", err);
-            // IPC 失败：回滚 boardMode 与马赛克底色，板书 UI 与后端标志一致
+            // IPC 失败：回滚 boardMode 与马赛克底色，板书 UI 与后端标志一致。
+            // 同批的退出穿透也失败时（后端 set_board_active 在退出失败时
+            // 拒绝置位，二者同败），后端仍是穿透态——连穿透 UI 一起恢复；
+            // 退出成功仅板书传输失败时后端已是 Drawing，恢复穿透反而错误。
             if (prev) {
               boardMode.value = prev.board;
               deps.drawing.setBlurBaseColor(
                 prev.board === "none" ? null : BOARD_COLORS[prev.board],
               );
+              if (exitPenetrationOk === false) {
+                isPenetrating.value = prev.penetrating;
+                showToolbar.value = prev.toolbarVisible;
+              }
             }
           }
           break;
