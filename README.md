@@ -19,11 +19,11 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 - 🪟 **Full-screen drawing overlay** — Transparent, always-on-top, skips taskbar.
 - 🖌️ **Eleven tools** — Pen, highlighter, eraser, line, rectangle, circle, arrow, text, fading pen, blur, step counter.
 - 🎨 **8-color palette** — Quick color cycling with Q/E.
-- 🔍 **Buttery-smooth strokes** — Dual-canvas engine with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
+- 🔍 **Buttery-smooth strokes** — Triple-canvas engine (committed / fading / preview layers) with quadratic Bézier midpoint smoothing + coalesced pointer events. Pressure-sensitive on pen tablets; mouse/trackpad draw at a constant width.
 - ⏳ **Fading pen** — Strokes dissolve automatically ~3s after being drawn (press `2`); perfect for transient emphasis.
 - 🧊 **Blur (mosaic) pen** — Pixelate regions of the underlying screen along the stroke path (press `0`).
 - 🔦 **Spotlight** — Dim everything except a follow-cursor highlight (press `F`; scroll adjusts radius).
-- 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board for free-hand lecturing (press `B`; export skips the screen capture).
+- 🧑‍🏫 **Whiteboard / Blackboard mode** — Flip the overlay into a plain white or black board (chosen by the default-board setting) for free-hand lecturing (press `B`; export skips the screen capture).
 - 🔍 **Screen zoom** — Freeze-zoom the whole overlay 2x–8x with the cursor as the anchor, and keep drawing while zoomed (press `M` / `Z`; scroll to change the level).
 - 📸 **Export & copy** — Composite annotations onto the underlying screen, save as PNG (`S` or toolbar button; custom export folder), or copy to clipboard (`Ctrl+C`).
 - 🔢 **Step counter** — Click to place auto-incrementing numbered badges (toolbar entry).
@@ -65,7 +65,7 @@ AkiMark is a minimal, always-resident screen markup utility built with **Tauri v
 | `Q` / `E` | Cycle color |
 | `F` | Toggle spotlight (scroll adjusts radius) |
 | `M` / `Z` | Toggle screen zoom (click to focus at cursor, scroll changes 2x / 4x / 6x / 8x) |
-| `B` | Cycle board mode (off → whiteboard → blackboard) |
+| `B` | Toggle board mode (off ⇄ the default board color from settings) |
 | `S` | Export screenshot as PNG |
 | `Ctrl+C` | Copy annotation to clipboard |
 | `Ctrl+D` | Clear all annotations |
@@ -104,6 +104,11 @@ AkiMark's overlay modes are designed to be mutually self-consistent — each mod
 - [Rust](https://rustup.rs/) (stable, 1.77+)
 - [Tauri v2 CLI prerequisites](https://v2.tauri.app/start/prerequisites/) (Windows: WebView2)
 
+> 🔧 **Toolchain note** — newer stable Rust deprecates `AtomicU32::fetch_update` (renamed
+> `try_update`); the codebase keeps the old name with `#[allow(deprecated)]` so both older
+> local toolchains and the latest CI compile clean. Once the minimum toolchain ships
+> `try_update`, rename and drop the allow.
+
 ### Run in development
 
 ```bash
@@ -133,7 +138,7 @@ npm run icon         # from assets/icon-1024.png
 ```
 ├── src/                  # Vue 3 frontend
 │   ├── components/       # DrawingOverlay, ToolToolbar
-│   ├── composables/      # useDrawing (dual-canvas engine)
+│   ├── composables/      # useDrawing (triple-canvas engine)
 │   ├── constants/        # tools, colors
 │   ├── i18n/             # en / zh-CN
 │   ├── App.vue           # overlay entry
@@ -218,11 +223,11 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 - 🪟 **全屏绘制覆盖层** — 透明、置顶、不占任务栏。
 - 🖌️ **11 种工具** — 画笔、荧光笔、橡皮、直线、矩形、圆形、箭头、文字、渐隐笔、马赛克笔、序号标注。
 - 🎨 **8 色调色板** — 用 Q/E 快速循环切换颜色。
-- 🔍 **顺滑的笔迹** — 双画布引擎，采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
+- 🔍 **顺滑的笔迹** — 三层画布引擎（已提交 / 渐隐 / 预览），采用二次贝塞尔中点平滑与合并指针事件。数位板笔支持真实压感；鼠标 / 触控板以恒定宽度绘制。
 - ⏳ **渐隐笔** — 笔画绘制约 3 秒后自动溶解消失（按 `2`）；适合临时强调。
 - 🧊 **马赛克笔** — 沿笔画路径将底层屏幕画面打上马赛克（按 `0`）。
 - 🔦 **聚光灯** — 压暗周围，突出跟随光标的亮点（按 `F`；滚轮调节半径）。
-- 🧑‍🏫 **白板 / 黑板模式** — 一键切换纯白 / 纯黑板书底，自由板书（按 `B`；导出时跳过截屏）。
+- 🧑‍🏫 **白板 / 黑板模式** — 一键切换到纯白 / 纯黑板书底（由设置中的默认板书色决定），自由板书（按 `B`；导出时跳过截屏）。
 - 🔍 **屏幕缩放** — 以光标为锚点将整个覆盖层冻结放大 2x–8x，放大状态下仍可绘制（按 `M` / `Z`；滚轮调整倍率）。
 - 📸 **导出与复制** — 将标注合成到底层屏幕并保存为 PNG（按 `S` 或工具栏按钮；可自定义导出目录），或一键复制到剪贴板（`Ctrl+C`）。
 - 🔢 **序号标注** — 点击放置自动递增的序号徽章（工具栏入口）。
@@ -263,7 +268,7 @@ AkiMark 是一款基于 **Tauri v2 + Vue 3** 构建的极简常驻屏幕标注�
 | `Q` / `E` | 循环切换颜色 |
 | `F` | 开关聚光灯（滚轮调节半径） |
 | `M` / `Z` | 开关屏幕缩放（点击以光标处聚焦，滚轮切换 2x / 4x / 6x / 8x） |
-| `B` | 循环黑板模式（关 → 白板 → 黑板） |
+| `B` | 开关板书模式（关 ⇄ 设置中的默认板书色） |
 | `S` | 导出截图 PNG |
 | `Ctrl+C` | 复制标注到剪贴板 |
 | `Ctrl+D` | 清空标注 |
@@ -302,6 +307,10 @@ AkiMark 的叠加模式经过全面设计，保证逻辑完全自洽 —— 任�
 - [Rust](https://rustup.rs/)（稳定版，1.77+）
 - [Tauri v2 CLI 前置条件](https://v2.tauri.app/start/prerequisites/)（Windows：WebView2）
 
+> 🔧 **工具链说明** — 新版稳定版 Rust 已弃用 `AtomicU32::fetch_update`（更名为
+> `try_update`）；代码暂保留旧名并加 `#[allow(deprecated)]`，使较旧的本地工具链
+> 与最新 CI 均可干净编译。待最低工具链包含 `try_update` 后改名并移除 allow。
+
 ### 开发运行
 
 ```bash
@@ -331,7 +340,7 @@ npm run icon         # 从 assets/icon-1024.png 生成
 ```
 ├── src/                  # Vue 3 前端
 │   ├── components/       # DrawingOverlay、ToolToolbar
-│   ├── composables/      # useDrawing（双画布引擎）
+│   ├── composables/      # useDrawing（三层画布引擎）
 │   ├── constants/        # 工具、颜色
 │   ├── i18n/             # en / zh-CN
 │   ├── App.vue           # 覆盖层入口
