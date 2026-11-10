@@ -12,7 +12,10 @@ function createMockCtx() {
   const lineWidthLog: number[] = [];
   const ctx = {
     setTransform: vi.fn(() => calls.push("setTransform")),
-    clearRect: vi.fn(() => calls.push("clearRect")),
+    // 记录参数：区分全屏 clear 与马赛克尾区小清除（w 远小于画布宽）
+    clearRect: vi.fn((_x?: number, _y?: number, _w?: number, _h?: number) =>
+      calls.push("clearRect"),
+    ),
     beginPath: vi.fn(() => calls.push("beginPath")),
     moveTo: vi.fn(() => calls.push("moveTo")),
     lineTo: vi.fn(() => calls.push("lineTo")),
@@ -371,6 +374,31 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     expect(drawing.hasBlurBase()).toBe(false);
   });
 
+  it("马赛克笔：增量预览尾块不残留（尾区清除 + 相交采样重贴，三轮审查 P3-01）", () => {
+    const { drawing, previewCtx } = setup();
+    drawing.setBlurBase({} as CanvasImageSource);
+    drawing.currentTool.value = "blur";
+    drawing.startDraw(pointer(10, 10));
+    flushRaf(); // 起笔帧：全清分支
+    const count = (c: string) => previewCtx.calls.filter((x) => x === c).length;
+    const baseClears = count("clearRect");
+    // 多帧小步移动（与采样步距同量级）：出现尾块的帧画新尾块前必须
+    // 清除上一尾块区域（clearRect 增加），且单帧 drawImage 增长有界
+    //（重贴相交采样 + 新尾块），不再无清屏地逐帧堆积
+    let prevImages = count("drawImage");
+    for (let i = 1; i <= 6; i++) {
+      drawing.drawTo(pointer(10 + i * 3, 10));
+      flushRaf();
+      const nowImages = count("drawImage");
+      expect(nowImages - prevImages).toBeLessThanOrEqual(10);
+      prevImages = nowImages;
+    }
+    expect(count("clearRect")).toBeGreaterThan(baseClears);
+    drawing.endDraw();
+    flushRaf();
+    expect(drawing.canClear.value).toBe(true);
+  });
+
   it("F1: 渐隐笔画部分过期后 clearAll + undo/redo 不损坏历史", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     const { drawing } = setup();
@@ -601,14 +629,19 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     const firstFrameBlocks = drawImage.mock.calls.length;
     expect(firstFrameBlocks).toBeGreaterThan(0);
 
-    const clearsBefore = countCalls(previewCtx.ctx, "clearRect");
     drawing.drawTo(pointer(400, 0));
     flushRaf();
     const secondFrameBlocks = drawImage.mock.calls.length - firstFrameBlocks;
     // 追加模式：新块数与首帧同量级（同距离），远小于首帧+首帧的全量重画
     expect(secondFrameBlocks).toBeLessThanOrEqual(firstFrameBlocks + 2);
-    // 追加路径不清预览层
-    expect(countCalls(previewCtx.ctx, "clearRect")).toBe(clearsBefore);
+    // 追加路径不做全屏 clear（增量帧允许的唯一 clearRect 是上一马赛克
+    // 尾块区域的清除，宽高 = cell ≪ 画布——三轮审查 P3-01 尾区清除）
+    const clearArgs = (
+      previewCtx.ctx.clearRect as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls as unknown as Array<[number, number, number, number]>;
+    for (const [, , w] of clearArgs) {
+      expect(w).toBeLessThan(100);
+    }
     // 采样沿 x 轴推进：新块首采样横坐标应大于首帧末块（只画了新段）
     const lastFirst = drawImage.mock.calls[firstFrameBlocks - 1]?.[5] as number;
     const firstSecond = drawImage.mock.calls[firstFrameBlocks]?.[5] as number;

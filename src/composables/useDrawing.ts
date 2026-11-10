@@ -104,11 +104,18 @@ export function useDrawing(
   let eraserAppliedPoints = 0;
   let penAppliedPoints = 0;
   let blurAppliedSamples = 0;
+  /**
+   * 上一帧马赛克尾块位置：尾块是 transient（不入采样缓存），但增量预览层
+   * 不清屏，旧尾块会残留在层上。增量帧画新尾块前清除该区域并重绘相交
+   * 采样块（drawMosaicSegment），保证预览与提交全量重绘逐像素一致。
+   */
+  let lastTail: Point | null = null;
 
   function resetPreviewProgress() {
     eraserAppliedPoints = 0;
     penAppliedPoints = 0;
     blurAppliedSamples = 0;
+    lastTail = null;
     // 马赛克采样缓存随笔画生命周期失效（新笔画/撤销/清屏/重建画布）
     mosaicCache = null;
   }
@@ -573,7 +580,8 @@ export function useDrawing(
    * fromSample：起始采样块索引，默认 0 = 全部；预览追加绘制传已画块数，
    * 只画新增块（source-over 贴同一源区幂等）。返回弧长采样总数（不含尾点）。
    * 采样经 ensureMosaicSamples 缓存/续算；尾点补偿为 transient：不入缓存、
-   * 每帧按当前端点重算重贴（幂等），笔画提交后的全量重绘与屏幕所见一致。
+   * 每帧按当前端点重算重贴（幂等）。增量预览层不清屏，旧尾块残留由尾区
+   * 清除处理（见 drawMosaicSegment 内），笔画提交后的全量重绘与屏幕所见一致。
    */
   function drawMosaicSegment(
     ctx: CanvasRenderingContext2D,
@@ -595,9 +603,8 @@ export function useDrawing(
     const samples = ensureMosaicSamples(action);
     // 尾点补偿（transient）：路径末端与最后采样距离 >1 时补一块，
     // 保证笔迹终点也有马赛克（弧长步进距终点可能残留 <1 步的缝隙）。
-    // 达到硬上限后不再贴尾块：预览（不清屏追加）与提交后的全量重绘
-    // 都只有 5000 弧长块，两者逐像素一致；若尾块照贴，预览每帧继续
-    // 追加新位置尾块，与提交重绘产生视觉分歧且绕过采样上限。
+    // 达到硬上限后不再贴尾块：预览与提交都只有 5000 弧长块。
+    // 尾块不入采样缓存；其在不清屏的增量预览层上的残留由下方尾区清除处理。
     const last = action.points[action.points.length - 1];
     const tailSample = samples[samples.length - 1];
     const hasTail =
@@ -628,7 +635,25 @@ export function useDrawing(
     for (let i = Math.max(0, fromSample); i < samples.length; i++) {
       drawBlock(samples[i]);
     }
+    // 尾区清除（仅增量预览路径 fromSample > 0）：全量重绘的画布总是先整体
+    // clear，无残留；增量预览层不清屏，上一帧尾块会残留在层上——提交后的
+    // 全量重绘沿全路径覆盖采样块（步距 0.75cell 相邻重叠），残留尾块与之
+    // 逐像素不一致（三轮审查 P3-01）。画新尾块前清除上一尾块区域并重绘
+    // 与其相交的采样块（source-over 同源重贴幂等）。相交扫描遍历全部采样：
+    // 锯齿路径下弧长相邻的采样可聚在同一 cell 区域，有界回扫不保证完备。
+    if (fromSample > 0 && lastTail) {
+      ctx.clearRect(lastTail.x - cell / 2, lastTail.y - cell / 2, cell, cell);
+      for (const s of samples) {
+        if (
+          Math.abs(s.x - lastTail.x) < cell &&
+          Math.abs(s.y - lastTail.y) < cell
+        ) {
+          drawBlock(s);
+        }
+      }
+    }
     if (hasTail) drawBlock(last);
+    lastTail = hasTail ? { x: last.x, y: last.y } : null;
     ctx.restore();
     return samples.length;
   }
