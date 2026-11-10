@@ -7,8 +7,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.8] - 2026-11-10
 
-Second-round review: async mode-transition ordering, remaining lifecycle
-edges, and config-validation hardening.
+Second- and third-round review: async mode-transition ordering, complete
+backend transition critical sections, remaining lifecycle edges, and
+config-validation hardening.
 
 ### Fixed
 
@@ -18,16 +19,34 @@ edges, and config-validation hardening.
   a global click-through hotkey right after entering board mode could read a
   stale flag and bypass the board protection). Failure semantics unchanged:
   the `togglePenetration` path still rolls back with a toast; other paths
-  warn only.
+  warn only, and a failed board-flag IPC now rolls `boardMode` back.
 - **Toolbar race on exiting click-through** — the shared IPC branch hid the
   toolbar for both directions; exiting relied on the backend's
   `drawing-return` event, and the event-vs-IPC race could leave the toolbar
   hidden. Exit now restores it explicitly.
-- **Symmetric state-transition locking (backend)** — `exit_penetration_mode`
-  and `deactivate_drawing` now hold the mode lock across the window API and
-  the state commit, matching `enter_penetration_mode`; concurrent enter/exit
-  can no longer interleave into "mode=Penetration but window clickable".
-  Cursor unclamping happens only after the window operations succeed.
+- **Backend transitions are fully locked** — `activate_drawing` previously ran
+  without the mode lock and both toggle handlers read the mode outside it:
+  concurrent toggles could double-activate, and a racing activate could
+  commit between a deactivate's commit and its event, letting the stale
+  "hidden" event overwrite frontend state. All four transitions are now
+  `*_locked` cores with a single lock spanning window APIs → commit →
+  cursor clip → broadcast, and both toggles decide under the lock. Events
+  are emitted inside the critical section, so event order = commit order.
+- **Click-through exit keeps cursor clip inside the lock** — the post-commit
+  `ClipCursor` and `drawing-return` broadcast ran after the lock was
+  released; interleaved with a concurrent re-entry they left the backend in
+  click-through while the cursor stayed clamped and a stale "returned to
+  drawing" event reached the frontend.
+- **Partial-failure rollback** — if `set_focus` fails after a successful
+  `show()`, activation hides the window again (mode stays Hidden); if
+  `hide()` fails after click-through was set, deactivation restores
+  interactivity (mode stays Drawing). Neither leaves a visible window
+  contradicting the committed mode.
+- **Board flag vs click-through is mutually exclusive on the backend** —
+  `set_board_active` shares the mode lock with transitions; if a racing
+  click-through entry slipped past the flag check, activating the board
+  atomically exits click-through first, so `board_active=true` and
+  `OverlayMode::Penetration` can never both hold.
 - **capture_screen guard leak** — a `WindowNotFound` early return after
   arming the activation guard never disarmed it, permanently disabling auto
   click-through. The window lookup now precedes arming, and the Hidden check
@@ -47,6 +66,12 @@ edges, and config-validation hardening.
   the transient tail block is no longer drawn, keeping preview and
   committed-repaint pixel-identical (previously preview kept appending tail
   blocks past the cap).
+- **Mosaic incremental preview clears stale tail blocks** — below the cap the
+  transient tail was still painted into the never-cleared incremental preview
+  layer each frame, accumulating blocks the committed repaint would not place;
+  each incremental frame now clears the previous tail zone and repaints the
+  sample blocks it intersects (source-over repaint from the same source is
+  idempotent), so preview and committed repaint stay pixel-identical.
 - **Config validation tightened** — hex colors must be exactly
   `#RGB`/`#RRGGBB`/`#RRGGBBAA`; the per-field repair used on load is now
   shared by the save path (`save_general`, and `save_drawing_prefs` rejects
@@ -54,9 +79,12 @@ edges, and config-validation hardening.
   rollback persistence retries once (then self-heals on the next save).
 - **Docs** — README corrected to the triple-canvas engine and the actual `B`
   behavior (off ⇄ configured default board, not a 3-way cycle); toolchain
-  note for the `fetch_update` deprecation shim.
+  note for the `fetch_update` deprecation shim; mode-runner comments updated
+  to the all-awaited effect execution and its exact serialization boundary
+  (per-dispatch ordering; concurrent dispatches may interleave at await
+  points by design).
 
-Tests: 79 → 86 frontend, 22 → 23 Rust.
+Tests: 79 → 88 frontend, 22 → 23 Rust.
 
 ## [0.2.7] - 2026-11-10
 
