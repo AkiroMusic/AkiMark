@@ -227,4 +227,34 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(modes.isPenetrating.value).toBe(true);
     expect(modes.showToolbar.value).toBe(false);
   });
+
+  it("穿透中 B×2 在 await 点交错：过期 dispatch 不再提交板书（五轮审查 P2-01）", async () => {
+    const { modes, drawing } = setup();
+    await modes.togglePenetration(); // 进入穿透
+    invokeMock.mockClear();
+    // 第一次 B（开板书）：退出穿透 IPC 挂起，dispatch 在 await 点停住
+    const hold = holdInvoke("exit_penetration_mode");
+    const first = modes.cycleBoard();
+    await Promise.resolve();
+    await Promise.resolve(); // 让第一次 dispatch 推进到 await exit_penetration
+    expect(invokeMock).toHaveBeenCalledWith("exit_penetration_mode");
+    invokeMock.mockClear();
+    // 第二次 B（关板书）：在第一次恢复前完整执行（set_board_active 正常返回）
+    await modes.cycleBoard();
+    expect(modes.boardMode.value).toBe("none");
+    expect(invokeMock).toHaveBeenCalledWith("set_board_active", {
+      active: false,
+    });
+    // 释放第一次的退出穿透：旧 dispatch 恢复后必须止步——
+    // 不得再发 set_board_active(true)，也不得把底色刷回 white
+    const callsBeforeRelease = invokeMock.mock.calls.length;
+    hold.releaseAll();
+    await first;
+    const newBoardCalls = invokeMock.mock.calls
+      .slice(callsBeforeRelease)
+      .filter((c) => c[0] === "set_board_active");
+    expect(newBoardCalls).toEqual([]);
+    expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
+    expect(modes.boardMode.value).toBe("none");
+  });
 });
