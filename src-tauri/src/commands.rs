@@ -65,12 +65,33 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     // 计数语义：若隐藏/显示期间用户又激活过，短臂复位不会清掉长臂。
     state.arm_activation_guard();
 
-    // 隐藏失败就不能继续截图：截到的是带 overlay 自身 UI 的画面，
-    // 会污染缩放底图/马赛克底图/导出图（而非静默产出脏数据）。
-    if let Err(e) = window.hide() {
-        crate::log::log(&format!("capture_screen: 隐藏窗口失败: {e}"));
-        spawn_guard_reset(&app);
-        return Err(AppError::CaptureFailed);
+    // 模式锁内置位截屏租约并隐藏窗口：hide 与 activate 不可能交错
+    //（activate 需要同一把锁），锁释放后到达的 activate 被租约拒绝
+    //（四轮审查 P2-02：此前 hide 在锁外，全局热键 Drawing→Hidden→activate
+    // 双切会把刚重显的 overlay 拍进底图）。锁不跨 BitBlt/编码——异步命令
+    // 长时间持锁会让热键处理线程等待。
+    {
+        // 仅持锁不读值：`_mode_guard` 仍存活到块尾（`let _ =` 会立刻 drop，
+        // 锁就形同虚设）
+        let _mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+        if state
+            .capture_in_progress
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            crate::log::log("capture_screen: 已有截屏进行中，拒绝并发截屏");
+            spawn_guard_reset(&app);
+            return Err(AppError::CaptureFailed);
+        }
+        // 隐藏失败就不能继续截图：截到的是带 overlay 自身 UI 的画面，
+        // 会污染缩放底图/马赛克底图/导出图（而非静默产出脏数据）。
+        if let Err(e) = window.hide() {
+            state
+                .capture_in_progress
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            crate::log::log(&format!("capture_screen: 隐藏窗口失败: {e}"));
+            spawn_guard_reset(&app);
+            return Err(AppError::CaptureFailed);
+        }
     }
 
     // 给 DWM 一点时间完成隐藏合成，避免截到残留的半透明窗口
@@ -79,11 +100,15 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     ));
     let result = crate::capture::capture_cursor_monitor_png();
 
-    // Hidden 检查 + 重显在模式锁内原子执行：检查通过后、重显完成前，
-    // 用户经全局热键退出标注不会再把空窗口重新弹出来
-    //（锁内只调窗口 API，与 enter_penetration_mode 同一先例）。
+    // 末尾锁区：先复位租约再 Hidden 检查 + 重显，原子执行——复位与 show
+    // 之间激活进不来（同锁），检查通过后、重显完成前，用户经全局热键退出
+    // 标注也不会把空窗口重新弹出来（锁内只调窗口 API，与转换核心同先例）。
+    // 全部失败路径均已复位租约（并发拒绝未持有、hide 失败处、本锁区开头）。
     {
         let mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .capture_in_progress
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         if *mode_guard == OverlayMode::Hidden {
             crate::log::log("capture_screen: 截屏期间已退出标注模式，不重新显示窗口");
         } else if let Err(e) = window.show() {

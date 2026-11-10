@@ -37,6 +37,10 @@ pub struct AppState {
     pub board_active: Arc<AtomicBool>,
     /// 失焦自动穿透线程是否已挂起（防 alt-tab 连按导致线程风暴）
     pub penetration_pending: Arc<AtomicBool>,
+    /// 截屏生命周期租约：hide → BitBlt → 重显期间为 true。此间激活一律
+    /// 拒绝——重显 overlay 会污染缩放/马赛克/导出底图（四轮审查 P2-02）；
+    /// 退出标注不受限。
+    pub capture_in_progress: Arc<AtomicBool>,
     /// 当前注册失败的全局快捷键（被其他程序占用）
     pub shortcut_conflicts: Mutex<Vec<String>>,
 }
@@ -49,6 +53,7 @@ impl AppState {
             activation_guard: Arc::new(AtomicU32::new(0)),
             board_active: Arc::new(AtomicBool::new(false)),
             penetration_pending: Arc::new(AtomicBool::new(false)),
+            capture_in_progress: Arc::new(AtomicBool::new(false)),
             shortcut_conflicts: Mutex::new(Vec::new()),
         }
     }
@@ -102,7 +107,19 @@ pub fn get_mode(state: &State<'_, AppState>) -> OverlayMode {
 /// 交错正确性由"单锁贯穿 + 判定在锁内"的结构性保证 + 真机 QA 覆盖。
 ///
 /// 进入绘制模式核心：定位 → 置顶 → 可交互 → 显示 → 聚焦 → 钳制 → 提交。
-fn activate_drawing_locked(app: &AppHandle, m: &mut OverlayMode) -> AppResult<()> {
+fn activate_drawing_locked(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    m: &mut OverlayMode,
+) -> AppResult<()> {
+    // 截屏生命周期（四轮审查 P2-02）：hide → BitBlt → 重显期间 overlay 必须
+    // 保持隐藏，激活一律拒绝。no-op 而非错误——热键窗口期内的按下无效，
+    // 再按一次即可（不引入延迟重放机制）；截屏自身在模式锁内先置租约再
+    // 隐藏窗口，本检查与 hide 不可能交错。
+    if state.capture_in_progress.load(Ordering::SeqCst) {
+        crate::log::log("activate_drawing: 截屏进行中，暂缓激活");
+        return Ok(());
+    }
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
@@ -237,7 +254,7 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
                     let state = app_for_thread.state::<AppState>();
                     state.disarm_activation_guard();
                 });
-                activate_drawing_locked(app, &mut m)
+                activate_drawing_locked(app, state, &mut m)
             }
             _ => deactivate_drawing_locked(app, state, &mut m),
         }
