@@ -53,15 +53,17 @@ function createMockCtx() {
   };
 }
 
-/** 造一个假的 HTMLCanvasElement（只提供 getContext + 尺寸属性） */
+/** 造一个假的 HTMLCanvasElement（只提供 getContext + 尺寸属性）。
+ * 就地扩充 mock ctx 自带的 canvas 对象并返回它：ctx.canvas === 返回值，
+ * setupCanvases 改尺寸时 renderPreview 的 ctx.canvas.width 同步生效——
+ * 此前两者是独立对象，全屏 clearRect 记录的宽高恒为 0，"区分全屏清与
+ * 尾区清"的断言形同虚设（四轮审查 P3-01）。 */
 function fakeCanvas(ctx: CanvasRenderingContext2D): HTMLCanvasElement {
-  return {
-    width: 0,
-    height: 0,
-    style: {},
-    getContext: () => ctx,
-    getBoundingClientRect: () => ({ left: 0, top: 0 }),
-  } as unknown as HTMLCanvasElement;
+  const shared = (ctx as unknown as { canvas: Record<string, unknown> }).canvas;
+  shared.getContext = () => ctx;
+  shared.getBoundingClientRect = () => ({ left: 0, top: 0 });
+  shared.style = {};
+  return shared as unknown as HTMLCanvasElement;
 }
 
 /** 构造指针事件（clientX/Y + pressure + pointerType + shift 修饰键） */
@@ -374,7 +376,7 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
     expect(drawing.hasBlurBase()).toBe(false);
   });
 
-  it("马赛克笔：增量预览尾块不残留（尾区清除 + 相交采样重贴，三轮审查 P3-01）", () => {
+  it("马赛克笔：尾区清理与相交采样重贴路径正确（三轮审查 P3-01，四轮修正 mock）", () => {
     const { drawing, previewCtx } = setup();
     drawing.setBlurBase({} as CanvasImageSource);
     drawing.currentTool.value = "blur";
@@ -394,6 +396,14 @@ describe("useDrawing 渐隐笔 / 马赛克笔", () => {
       prevImages = nowImages;
     }
     expect(count("clearRect")).toBeGreaterThan(baseClears);
+    // 增量帧的 clearRect 全部是尾区小清除（首帧全屏清之外）；
+    // mock 已共享 canvas 尺寸对象，全屏清的 w = 画布宽 1000 可被识别
+    const clearArgs = (
+      previewCtx.ctx.clearRect as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls as unknown as Array<[number, number, number, number]>;
+    for (const [, , w] of clearArgs.slice(baseClears)) {
+      expect(w).toBeLessThan(100);
+    }
     drawing.endDraw();
     flushRaf();
     expect(drawing.canClear.value).toBe(true);
@@ -628,6 +638,11 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     >;
     const firstFrameBlocks = drawImage.mock.calls.length;
     expect(firstFrameBlocks).toBeGreaterThan(0);
+    // 首帧全屏清合法（w = 画布宽 1000）；后续追加帧只允许尾区小清除
+    const clearRectMock = previewCtx.ctx.clearRect as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const firstFrameClears = clearRectMock.mock.calls.length;
 
     drawing.drawTo(pointer(400, 0));
     flushRaf();
@@ -636,10 +651,11 @@ describe("useDrawing 增量渲染（v0.2.6 性能）", () => {
     expect(secondFrameBlocks).toBeLessThanOrEqual(firstFrameBlocks + 2);
     // 追加路径不做全屏 clear（增量帧允许的唯一 clearRect 是上一马赛克
     // 尾块区域的清除，宽高 = cell ≪ 画布——三轮审查 P3-01 尾区清除）
-    const clearArgs = (
-      previewCtx.ctx.clearRect as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls as unknown as Array<[number, number, number, number]>;
-    for (const [, , w] of clearArgs) {
+    const newClears = clearRectMock.mock.calls.slice(
+      firstFrameClears,
+    ) as unknown as Array<[number, number, number, number]>;
+    expect(newClears.length).toBeGreaterThanOrEqual(1); // 首帧尾块在帧2被清除
+    for (const [, , w] of newClears) {
       expect(w).toBeLessThan(100);
     }
     // 采样沿 x 轴推进：新块首采样横坐标应大于首帧末块（只画了新段）
