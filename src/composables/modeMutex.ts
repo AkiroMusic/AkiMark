@@ -31,7 +31,7 @@ export type ToastKey =
 
 export type ModeEffect =
   | { type: "toast"; key: ToastKey }
-  /** 进/出穿透的 invoke。togglePenetration 路径须 await 并处理回滚；其余路径 fire-and-forget */
+  /** 进/出穿透的 invoke（执行端统一 await；失败回滚语义见 useOverlayModes.runEffects） */
   | { type: "invokeEnterPenetration" }
   | { type: "invokeExitPenetration" }
   /** 同步后端板书标志（板书期间拒绝穿透的全局兜底） */

@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { useOverlayModes } from "./useOverlayModes";
+import { BOARD_COLORS } from "../constants/tools";
 import type { useDrawing } from "./useDrawing";
 import type { Ref } from "vue";
 
@@ -46,7 +47,7 @@ function setup(overrides: { beforeCapture?: () => void } = {}) {
     strokeActive,
     ...overrides,
   });
-  return { modes, showToast, uiLocked };
+  return { modes, showToast, uiLocked, drawing };
 }
 
 /** 把 invoke 变成可控延迟：cmd → 手动 resolve 的 Promise */
@@ -184,5 +185,27 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     await modes.togglePenetration();
     expect(modes.isPenetrating.value).toBe(false);
     expect(showToast).toHaveBeenCalled();
+  });
+
+  it("set_board_active 失败：回滚 boardMode 与马赛克底色（三轮审查 P2-01）", async () => {
+    let failBoard = false;
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "set_board_active" && failBoard
+        ? Promise.reject(new Error("ipc failed"))
+        : Promise.resolve({}),
+    );
+    const { modes, drawing } = setup();
+    await modes.cycleBoard(); // IPC 成功：进入板书
+    expect(modes.boardMode.value).toBe("white");
+    failBoard = true;
+    await modes.cycleBoard(); // 退出板书 IPC 失败 → 回滚为板书中
+    expect(modes.boardMode.value).toBe("white");
+    expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(
+      BOARD_COLORS.white,
+    );
+    failBoard = false;
+    await modes.cycleBoard(); // 恢复后正常退出
+    expect(modes.boardMode.value).toBe("none");
+    expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
   });
 });

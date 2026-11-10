@@ -15,9 +15,10 @@ import type { useDrawing } from "./useDrawing";
  * 覆盖层模式状态机（板书/缩放/聚光灯/穿透/工具栏）：
  * 状态转移经 modeMutex 纯函数裁决，本模块只执行 effects（invoke/toast/截屏）。
  *
- * invoke 的两种执行风格（与既有行为一致）：
- * - togglePenetration（X 键）路径：await，失败回滚 isPenetrating 并 toast；
- * - 其他模式触发的穿透退出：fire-and-forget，失败仅 console.warn。
+ * invoke 统一 await（runEffects 顺序执行全部 effects，模式转换的副作用串行
+ * 完成后切换才算完成）；失败语义分野：togglePenetration（X 键）路径回滚
+ * isPenetrating 并 toast，其余路径仅 console.warn（以后端为准，前端不盲目回滚），
+ * 板书标志 IPC 失败时回滚 boardMode（见 runEffects 的 setBoardActive 分支）。
  */
 export function useOverlayModes(deps: {
   drawing: ReturnType<typeof useDrawing>;
@@ -76,14 +77,22 @@ export function useOverlayModes(deps: {
   /**
    * 执行 effects。全部 await：模式转换的副作用串行完成后切换才算完成——
    * 退出穿透的 IPC 未完成就开始截屏、板书标志未确认就允许下一模式操作，
-   * 这类交错是二轮审查指出的竞态源。入口已由 uiLocked/互斥规则门控，
-   * await 之后交错即为确定性串行（不引入额外的事务队列）。
-   * 失败语义分野保留：togglePenetration 路径回滚乐观状态并 toast；
-   * 其余路径仅 console.warn（以后端为准，前端不盲目回滚）。
+   * 这类交错是二轮审查指出的竞态源。
+   *
+   * 串行保证的边界（不引入事务队列是设计取舍）：单次 dispatch 内的 effects
+   * 严格按序 await；并发 dispatch（如热键与指针入口同时触发）在 await 点
+   * 仍可交错——同步裁决段（snapshot → writeBack）每次 dispatch 原子执行，
+   * 副作用串行是 per-dispatch 保证而非全局串行。入口已由 uiLocked/互斥规则
+   * 门控，跨入口的冲突意图由 modeMutex 裁决。
+   *
+   * 失败语义分野：togglePenetration 路径回滚乐观状态并 toast；
+   * 其余路径仅 console.warn（以后端为准，前端不盲目回滚），
+   * 唯 setBoardActive 失败回滚 boardMode（板书 UI 必须与后端标志一致）。
    */
   async function runEffects(
     effects: ModeEffect[],
     penetrationAwaited: boolean,
+    prev?: ModeState,
   ) {
     for (const fx of effects) {
       switch (fx.type) {
@@ -119,6 +128,13 @@ export function useOverlayModes(deps: {
             await invoke("set_board_active", { active: fx.active });
           } catch (err) {
             console.warn("[akimark] set_board_active failed", err);
+            // IPC 失败：回滚 boardMode 与马赛克底色，板书 UI 与后端标志一致
+            if (prev) {
+              boardMode.value = prev.board;
+              deps.drawing.setBlurBaseColor(
+                prev.board === "none" ? null : BOARD_COLORS[prev.board],
+              );
+            }
           }
           break;
         case "setBoardColor":
@@ -145,11 +161,12 @@ export function useOverlayModes(deps: {
   }
 
   async function dispatch(action: ModeAction) {
-    const { state, effects } = applyModeAction(snapshot(), action, {
+    const prev = snapshot();
+    const { state, effects } = applyModeAction(prev, action, {
       boardDefault: deps.boardDefault.value,
     });
     writeBack(state);
-    await runEffects(effects, action.type === "togglePenetration");
+    await runEffects(effects, action.type === "togglePenetration", prev);
   }
 
   /** 开启缩放的截屏流程：提交在途笔画 → 隐藏 UI → capture → Blob URL → 置倍率 */
