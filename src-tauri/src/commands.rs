@@ -53,13 +53,15 @@ fn spawn_guard_reset(app: &AppHandle) {
 /// 若在主线程同步执行会冻结所有窗口/托盘/热键，故挪到异步运行时线程池。
 #[tauri::command(async)]
 pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<String> {
+    // 先拿窗口再置保护：WindowNotFound 早退不再泄漏激活保护计数
+    //（此前 arm 在前，这条早退路径没有 disarm，自动穿透会永久失效）
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or(AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     // 截屏期间抑制"失焦自动穿透"：隐藏窗口会导致失焦，避免误触发穿透模式。
     // 计数语义：若隐藏/显示期间用户又激活过，短臂复位不会清掉长臂。
     state.arm_activation_guard();
 
-    let window = app
-        .get_webview_window(OVERLAY_LABEL)
-        .ok_or(AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     // 隐藏失败就不能继续截图：截到的是带 overlay 自身 UI 的画面，
     // 会污染缩放底图/马赛克底图/导出图（而非静默产出脏数据）。
     if let Err(e) = window.hide() {
@@ -74,20 +76,24 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     ));
     let result = crate::capture::capture_cursor_monitor_png();
 
-    // 截屏期间用户可能按 Esc 退出（mode=Hidden）：此时不再重新显示窗口，
-    // 否则会重新弹出一个卡住的透明窗口。
-    let mode = overlay::get_mode(&state);
-    if mode == OverlayMode::Hidden {
-        crate::log::log("capture_screen: 截屏期间已退出标注模式，不重新显示窗口");
-    } else if let Err(e) = window.show() {
-        // 重试一次（偶发的窗口被其他进程短暂占用）；仍失败则报错，
-        // 让前端知道"截图虽成功但窗口没能恢复"，而不是假装一切正常。
-        crate::log::log(&format!("capture_screen: 重新显示窗口失败（重试前）: {e}"));
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        if let Err(e2) = window.show() {
-            crate::log::log(&format!("capture_screen: 重新显示窗口重试仍失败: {e2}"));
-            spawn_guard_reset(&app);
-            return Err(AppError::CaptureFailed);
+    // Hidden 检查 + 重显在模式锁内原子执行：检查通过后、重显完成前，
+    // 用户经全局热键退出标注不会再把空窗口重新弹出来
+    //（锁内只调窗口 API，与 enter_penetration_mode 同一先例）。
+    {
+        let mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+        if *mode_guard == OverlayMode::Hidden {
+            crate::log::log("capture_screen: 截屏期间已退出标注模式，不重新显示窗口");
+        } else if let Err(e) = window.show() {
+            // 重试一次（偶发的窗口被其他进程短暂占用）；仍失败则报错，
+            // 让前端知道"截图虽成功但窗口没能恢复"，而不是假装一切正常。
+            crate::log::log(&format!("capture_screen: 重新显示窗口失败（重试前）: {e}"));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Err(e2) = window.show() {
+                crate::log::log(&format!("capture_screen: 重新显示窗口重试仍失败: {e2}"));
+                drop(mode_guard);
+                spawn_guard_reset(&app);
+                return Err(AppError::CaptureFailed);
+            }
         }
     }
 
@@ -426,6 +432,14 @@ pub fn handle_focus_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             return;
         }
         if state.board_active.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        // 复查 settings 焦点：120ms 等待期内用户可能点开了设置窗口
+        //（设计约定"设置窗口获得焦点不算失焦"，延迟线程同样要遵守）
+        if app
+            .get_webview_window(crate::SETTINGS_LABEL)
+            .is_some_and(|w| w.is_focused().unwrap_or(false))
+        {
             return;
         }
         let mode = overlay::get_mode(&state);

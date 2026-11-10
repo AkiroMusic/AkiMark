@@ -180,16 +180,19 @@ fn fallback_position(window: &tauri::WebviewWindow) {
 
 /// 退出绘制模式：隐藏窗口、释放光标限制。
 pub fn deactivate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
-    #[cfg(target_os = "windows")]
-    win32::release_cursor();
-
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
 
+    // 与 enter/exit_penetration 同构：模式锁覆盖窗口 API 与提交。
+    let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
     window.set_ignore_cursor_events(true)?;
     window.hide()?;
-    set_mode(state, OverlayMode::Hidden);
+    // 隐藏成功后才释放光标钳制：失败早退时钳制保持原状
+    #[cfg(target_os = "windows")]
+    win32::release_cursor();
+    *m = OverlayMode::Hidden;
+    drop(m);
     // 离开绘制模式即结束板书模式（webview 重载后前端标志可能丢失，后端兜底复位）
     state.board_active.store(false, Ordering::SeqCst);
     let _ = app.emit("overlay-mode-changed", "hidden");
@@ -226,15 +229,16 @@ pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> A
         let _ = app.emit("penetration-blocked", ());
         return Ok(());
     }
-    #[cfg(target_os = "windows")]
-    win32::release_cursor();
-
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     // 失败时经 `?` 返回：锁随 guard 释放，模式保持 Drawing，
     // 错误传回调用方（前端据此回滚乐观状态）
     window.set_ignore_cursor_events(true)?;
+    // OS 切换成功后再释放光标钳制：此前先释放后切换，切换失败会留下
+    // "模式仍是 Drawing 但光标钳制已丢"的中间态（无需回滚逻辑）
+    #[cfg(target_os = "windows")]
+    win32::release_cursor();
     *m = OverlayMode::Penetration;
     drop(m);
     let _ = app.emit("overlay-mode-changed", "penetration");
@@ -243,14 +247,20 @@ pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> A
 
 /// 退出穿透模式，回到绘制。
 pub fn exit_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
-    if get_mode(state) == OverlayMode::Hidden {
+    // 与 enter_penetration_mode 同构的检查-执行-提交（模式锁覆盖窗口 API）：
+    // 此前不持锁，与进入穿透并发时可能交错成"mode=Penetration 但窗口
+    // 不穿透"的不一致态。
+    let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+    // 幂等：隐藏状态无需退出穿透
+    if *m == OverlayMode::Hidden {
         return Ok(());
     }
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     window.set_ignore_cursor_events(false)?;
-    set_mode(state, OverlayMode::Drawing);
+    *m = OverlayMode::Drawing;
+    drop(m);
     // 回到绘制模式：重新限制光标到 overlay 窗口（画布）所在显示器。
     // 不能按光标所在屏钳制：穿透期间光标可能已移到其他显示器，
     // 钳在光标屏会把用户困在没有画布的屏上（点击无响应）。
