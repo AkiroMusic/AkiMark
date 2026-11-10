@@ -20,6 +20,17 @@ config-validation hardening.
   stale flag and bypass the board protection). Failure semantics unchanged:
   the `togglePenetration` path still rolls back with a toast; other paths
   warn only, and a failed board-flag IPC now rolls `boardMode` back.
+- **Stale dispatches stop submitting** — concurrent dispatches interleave at
+  await points by design; a dispatch superseded by a newer one now stops
+  after its in-flight effect instead of committing remaining effects or
+  running rollbacks (a monotonic revision guard, not a global queue).
+  Previously, pressing B twice rapidly from click-through could leave the
+  board flag on in the backend while the board UI was off, silently blocking
+  click-through.
+- **Board activation is rejected while hidden** — a late `set_board_active(true)`
+  arriving after the overlay was deactivated could re-arm the board flag;
+  the backend now rejects it with a new `InvalidState` error so the frontend
+  rolls its board UI back.
 - **Toolbar race on exiting click-through** — the shared IPC branch hid the
   toolbar for both directions; exiting relied on the backend's
   `drawing-return` event, and the event-vs-IPC race could leave the toolbar
@@ -57,7 +68,10 @@ config-validation hardening.
   bake it into the zoom/mosaic/export base image. A capture lease is now
   taken under the mode lock together with the hide; activations are declined
   (no-op) until the capture's final locked section releases the lease before
-  the Hidden check and re-show. The lock is never held across BitBlt/encode.
+  the Hidden check and re-show. Entering click-through is declined during the
+  lease too — its event would clear the zoom level, and the returning capture
+  would unconditionally reopen it, leaving click-through and zoom active
+  together. The lock is never held across BitBlt/encode.
 - **capture_screen guard leak** — a `WindowNotFound` early return after
   arming the activation guard never disarmed it, permanently disabling auto
   click-through. The window lookup now precedes arming, and the Hidden check
@@ -101,7 +115,7 @@ config-validation hardening.
   (per-dispatch ordering; concurrent dispatches may interleave at await
   points by design).
 
-Tests: 79 → 89 frontend, 22 → 24 Rust.
+Tests: 79 → 90 frontend, 22 → 25 Rust.
 
 ## [0.2.7] - 2026-11-10
 
