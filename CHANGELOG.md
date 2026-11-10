@@ -5,6 +5,59 @@ All notable changes to AkiMark are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-11-10
+
+Second-round review: async mode-transition ordering, remaining lifecycle
+edges, and config-validation hardening.
+
+### Fixed
+
+- **Mode side-effects are fully awaited** — exit-penetration completes before
+  the zoom capture starts, and the board flag is confirmed by
+  `set_board_active` before a board switch counts (previously fire-and-forget:
+  a global click-through hotkey right after entering board mode could read a
+  stale flag and bypass the board protection). Failure semantics unchanged:
+  the `togglePenetration` path still rolls back with a toast; other paths
+  warn only.
+- **Toolbar race on exiting click-through** — the shared IPC branch hid the
+  toolbar for both directions; exiting relied on the backend's
+  `drawing-return` event, and the event-vs-IPC race could leave the toolbar
+  hidden. Exit now restores it explicitly.
+- **Symmetric state-transition locking (backend)** — `exit_penetration_mode`
+  and `deactivate_drawing` now hold the mode lock across the window API and
+  the state commit, matching `enter_penetration_mode`; concurrent enter/exit
+  can no longer interleave into "mode=Penetration but window clickable".
+  Cursor unclamping happens only after the window operations succeed.
+- **capture_screen guard leak** — a `WindowNotFound` early return after
+  arming the activation guard never disarmed it, permanently disabling auto
+  click-through. The window lookup now precedes arming, and the Hidden check
+  plus `window.show()` run atomically under the mode lock (a hotkey exit
+  during capture can no longer re-pop an empty window).
+- **Auto click-through re-checks Settings** — the 120ms delayed thread now
+  verifies the settings window isn't focused (opening Settings within the
+  window aborts the transition), consistent with "settings focus isn't
+  blur".
+- **All zoom entries commit the active stroke** — a new `beforeCapture` hook
+  fires before every zoom capture; the toolbar button previously skipped the
+  commit the keyboard path had.
+- **PointerUp final sample** — the release position is fed through
+  `drawTo` before ending a stroke (shapes no longer end short of the actual
+  release point); `lostpointercapture` is handled as a hang safeguard.
+- **Mosaic tail block counts against the cap** — after the 5000-sample cap
+  the transient tail block is no longer drawn, keeping preview and
+  committed-repaint pixel-identical (previously preview kept appending tail
+  blocks past the cap).
+- **Config validation tightened** — hex colors must be exactly
+  `#RGB`/`#RRGGBB`/`#RRGGBBAA`; the per-field repair used on load is now
+  shared by the save path (`save_general`, and `save_drawing_prefs` rejects
+  invalid colors with a new bilingual `InvalidColor` error); shortcut
+  rollback persistence retries once (then self-heals on the next save).
+- **Docs** — README corrected to the triple-canvas engine and the actual `B`
+  behavior (off ⇄ configured default board, not a 3-way cycle); toolchain
+  note for the `fetch_update` deprecation shim.
+
+Tests: 79 → 86 frontend, 22 → 23 Rust.
+
 ## [0.2.7] - 2026-11-10
 
 Reliability release from an external code review: fixes window/mode/capture
