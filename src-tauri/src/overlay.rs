@@ -59,6 +59,11 @@ impl AppState {
     }
 
     /// 复位激活保护（活跃臂 -1，饱和到 0，不会下溢）。
+    /// 兼容性说明：新版 Rust 将 AtomicU32::fetch_update 更名为 try_update
+    ///（旧名 deprecated，CI -D warnings 下视为错误），旧工具链（< 更名版本）
+    /// 尚无 try_update。两端兼容的做法：保留旧名 + allow(deprecated)，
+    /// 待最低工具链跨过更名版本后改名并移除 allow。
+    #[allow(deprecated)]
     pub fn disarm_activation_guard(&self) {
         let _ = self
             .activation_guard
