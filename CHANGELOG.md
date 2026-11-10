@@ -45,8 +45,19 @@ config-validation hardening.
 - **Board flag vs click-through is mutually exclusive on the backend** —
   `set_board_active` shares the mode lock with transitions; if a racing
   click-through entry slipped past the flag check, activating the board
-  atomically exits click-through first, so `board_active=true` and
-  `OverlayMode::Penetration` can never both hold.
+  atomically exits click-through first. If that exit fails, the whole call
+  fails and the flag is not committed (previously it logged and set the flag
+  anyway, so `board_active=true` and `Penetration` could still coexist); the
+  error reaches the frontend, which now also restores the click-through UI
+  when the exit and the flag IPC fail together.
+- **Capture lease keeps the overlay hidden during screenshots** — the
+  capture's `hide()` ran outside the mode lock and nothing covered the
+  settle-wait/BitBlt window, so two rapid global-hotkey toggles
+  (Drawing → Hidden → activate) could re-show the overlay mid-capture and
+  bake it into the zoom/mosaic/export base image. A capture lease is now
+  taken under the mode lock together with the hide; activations are declined
+  (no-op) until the capture's final locked section releases the lease before
+  the Hidden check and re-show. The lock is never held across BitBlt/encode.
 - **capture_screen guard leak** — a `WindowNotFound` early return after
   arming the activation guard never disarmed it, permanently disabling auto
   click-through. The window lookup now precedes arming, and the Hidden check
@@ -71,7 +82,13 @@ config-validation hardening.
   layer each frame, accumulating blocks the committed repaint would not place;
   each incremental frame now clears the previous tail zone and repaints the
   sample blocks it intersects (source-over repaint from the same source is
-  idempotent), so preview and committed repaint stay pixel-identical.
+  idempotent), keeping preview and committed repaint consistent. The test
+  mock now shares the canvas size object with the 2D context, so full-canvas
+  clears are genuinely distinguishable from tail-zone clears in assertions.
+- **Flaky locale tests merged** — two error-localization tests raced on the
+  global locale flag (each set → assert → set interleaved with the other's
+  assertions), an occasional CI failure unrelated to any code change; they
+  are now a single sequential test.
 - **Config validation tightened** — hex colors must be exactly
   `#RGB`/`#RRGGBB`/`#RRGGBBAA`; the per-field repair used on load is now
   shared by the save path (`save_general`, and `save_drawing_prefs` rejects
@@ -84,7 +101,7 @@ config-validation hardening.
   (per-dispatch ordering; concurrent dispatches may interleave at await
   points by design).
 
-Tests: 79 → 88 frontend, 22 → 23 Rust.
+Tests: 79 → 89 frontend, 22 → 24 Rust.
 
 ## [0.2.7] - 2026-11-10
 
