@@ -334,4 +334,48 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(modes.zoom.value).toBe(0);
     expect(modes.isPenetrating.value).toBe(true);
   });
+
+  it("rAF 期间穿透事件先到、截图被后端拒：finally 不得重显工具栏、不弹失败提示（七轮审查 P2-01）", async () => {
+    const { modes, showToast } = setup();
+    await modes.toggleToolbarWithSpace(); // 工具栏初始可见（prevToolbar=true）
+    expect(modes.showToolbar.value).toBe(true);
+    // 截图延迟 50ms 后被拒（模拟后端 ensure_capture_allowed 的 InvalidState）：
+    // rAF 等待在模式锁外，穿透可在租约建立前进入
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "capture_screen"
+        ? new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("InvalidState")), 50),
+          )
+        : Promise.resolve({}),
+    );
+    void modes.toggleZoom(); // 进入截屏流程：工具栏隐藏、uiLocked
+    await vi.advanceTimersByTimeAsync(0); // rAF 同步桩：capture 在途
+    // 截屏在途：穿透事件先到（后端 X 已进入穿透）
+    modes.syncPenetrationFromBackend(true);
+    expect(modes.showToolbar.value).toBe(false);
+    expect(modes.zoom.value).toBe(0);
+    // 截图返回失败：finally 不得把工具栏恢复为 prevToolbar=true 覆盖穿透
+    // 同步；穿透态的拒绝是模式切换正常结果，不得弹"截图失败"
+    await vi.advanceTimersByTimeAsync(60);
+    await Promise.resolve();
+    expect(modes.showToolbar.value).toBe(false);
+    expect(modes.isPenetrating.value).toBe(true);
+    expect(modes.zoom.value).toBe(0);
+    expect(showToast).not.toHaveBeenCalledWith("action.captureFailed");
+  });
+
+  it("dispose 使在途截屏流程失效：不再创建 Blob URL（七轮审查 P3）", async () => {
+    const { modes } = setup();
+    const hold = holdInvoke("capture_screen");
+    void modes.toggleZoom();
+    await Promise.resolve();
+    await Promise.resolve(); // capture 在途
+    modes.dispose(); // 组件卸载：失效在途 dispatch + 释放底图
+    hold.releaseAll();
+    await Promise.resolve();
+    await Promise.resolve();
+    // 卸载后恢复执行的截屏流程已 stale：不得写入 zoomBg / zoom
+    expect(modes.zoomBg.value).toBeNull();
+    expect(modes.zoom.value).toBe(0);
+  });
 });
