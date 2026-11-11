@@ -257,4 +257,81 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
     expect(modes.boardMode.value).toBe("none");
   });
+
+  it("B 挂起时 resetModes（清屏/会话重置）：旧 dispatch 失效不再提交板书（六轮审查 P2-01）", async () => {
+    const { modes, drawing } = setup();
+    await modes.togglePenetration(); // 进入穿透
+    invokeMock.mockClear();
+    // 第一次 B（开板书）：退出穿透 IPC 挂起
+    const hold = holdInvoke("exit_penetration_mode");
+    const first = modes.cycleBoard();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("exit_penetration_mode");
+    invokeMock.mockClear();
+    // clear-drawing 路径触发 resetModes：直接复位状态并发 set_board_active(false)
+    //（不经 dispatch revision——这正是需要 invalidatePendingDispatches 的原因）
+    modes.resetModes();
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("set_board_active", {
+      active: false,
+    });
+    invokeMock.mockClear();
+    // 释放第一次的退出穿透：旧 dispatch 已被 resetModes 失效，必须止步
+    hold.releaseAll();
+    await first;
+    const newBoardCalls = invokeMock.mock.calls.filter(
+      (c) => c[0] === "set_board_active",
+    );
+    expect(newBoardCalls).toEqual([]); // 不得再发 set_board_active(true)
+    expect(drawing.setBlurBaseColor).toHaveBeenLastCalledWith(null);
+    expect(modes.boardMode.value).toBe("none");
+  });
+
+  it("穿透态 Space×2：旧 dispatch 的迟到成功不得重显工具栏（六轮审查 P2-01A）", async () => {
+    const { modes } = setup();
+    await modes.togglePenetration(); // 进入穿透：工具栏隐藏
+    invokeMock.mockClear();
+    // 第一次 Space：穿透态分支——乐观写 penetrating=false + 工具栏显示，
+    // await exit_penetration_mode（挂起）
+    const hold = holdInvoke("exit_penetration_mode");
+    const first = modes.toggleToolbarWithSpace();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(modes.showToolbar.value).toBe(true); // 乐观翻转
+    expect(modes.isPenetrating.value).toBe(false); // 第一次已乐观写非穿透
+    invokeMock.mockClear();
+    // 第二次 Space：snapshot 已非穿透 → 普通切换 toolbarVisible→false，
+    // 无 IPC 立即完成（GPT 时序：第二次操作把工具栏切隐藏）
+    await modes.toggleToolbarWithSpace();
+    expect(modes.showToolbar.value).toBe(false);
+    // 释放第一次 IPC：过期 dispatch 的成功收尾（showToolbar=true）
+    // 不得覆盖第二次写入的 false
+    hold.releaseAll();
+    await first;
+    expect(modes.showToolbar.value).toBe(false);
+    expect(modes.isPenetrating.value).toBe(false);
+  });
+
+  it("截屏在途时穿透事件先到：截图返回后不得重开缩放（六轮审查 P2-02）", async () => {
+    const { modes } = setup();
+    // 截图 IPC 挂起（返回有效 base64）
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "capture_screen"
+        ? new Promise((resolve) => setTimeout(() => resolve("c2NyZWVu"), 50))
+        : Promise.resolve({}),
+    );
+    void modes.toggleZoom(); // 开启缩放：进入截屏流程
+    await vi.advanceTimersByTimeAsync(0); // rAF 同步桩：截屏 IPC 已在途
+    expect(invokeMock).toHaveBeenCalledWith("capture_screen");
+    // 截屏在途：延迟送达的穿透事件把穿透置 true、缩放清零
+    modes.syncPenetrationFromBackend(true);
+    expect(modes.zoom.value).toBe(0);
+    expect(modes.isPenetrating.value).toBe(true);
+    // 截图返回：旧流程不得重开 zoom（否则穿透 ∧ 缩放并存）
+    await vi.advanceTimersByTimeAsync(60);
+    await Promise.resolve();
+    expect(modes.zoom.value).toBe(0);
+    expect(modes.isPenetrating.value).toBe(true);
+  });
 });
