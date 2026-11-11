@@ -48,6 +48,19 @@ fn spawn_guard_reset(app: &AppHandle) {
     });
 }
 
+/// 截屏前置校验（纯函数 seam，测试无需 mock tauri）：只允许 Drawing 模式
+/// 开始截屏。Penetration 下截屏的底图虽纯净（窗口隐藏不改变穿透属性），
+/// 但前端缩放流程会在截屏返回后重开倍率——与延迟送达的穿透事件交错后
+/// "穿透 ∧ 缩放"并存（六轮审查 P2-02）。Hidden 下截屏同理无意义。
+fn ensure_capture_allowed(mode: &OverlayMode) -> AppResult<()> {
+    if *mode != OverlayMode::Drawing {
+        return Err(AppError::InvalidState(
+            "cannot capture screen outside drawing mode".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// 截取光标所在显示器的画面（PNG base64）。
 /// 前端会在调用前隐藏工具栏/光标/聚光灯等 UI；本命令负责隐藏 overlay 窗口本身，
 /// 确保截到纯净桌面底图，随后合成标注笔画并保存。
@@ -65,15 +78,22 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     // 计数语义：若隐藏/显示期间用户又激活过，短臂复位不会清掉长臂。
     state.arm_activation_guard();
 
-    // 模式锁内置位截屏租约并隐藏窗口：hide 与 activate 不可能交错
+    // 模式锁内：先校验当前模式，再置位截屏租约并隐藏窗口。只允许 Drawing
+    // 状态开始截屏（六轮审查 P2-02）：穿透已提交但事件尚未送达前端时，
+    // 前端的缩放截屏仍会到达——放行会让穿透事件先清零 zoom、截图返回又
+    // 重开倍率，"穿透 ∧ 缩放"并存。与转换共用同一把锁：先拿锁者赢——
+    // capture 先到则租约置位、后续进入穿透被拒；enter 先到则模式已是
+    // Penetration、capture 在此被拒。hide 与 activate 也不可能交错
     //（activate 需要同一把锁），锁释放后到达的 activate 被租约拒绝
-    //（四轮审查 P2-02：此前 hide 在锁外，全局热键 Drawing→Hidden→activate
-    // 双切会把刚重显的 overlay 拍进底图）。锁不跨 BitBlt/编码——异步命令
-    // 长时间持锁会让热键处理线程等待。
+    //（四轮审查 P2-02）。锁不跨 BitBlt/编码——异步命令长时间持锁会让
+    // 热键处理线程等待。
     {
-        // 仅持锁不读值：`_mode_guard` 仍存活到块尾（`let _ =` 会立刻 drop，
-        // 锁就形同虚设）
-        let _mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+        let mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = ensure_capture_allowed(&mode_guard) {
+            crate::log::log(&format!("capture_screen: {e}"));
+            spawn_guard_reset(&app);
+            return Err(e);
+        }
         if state
             .capture_in_progress
             .swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -495,4 +515,22 @@ pub fn handle_focus_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_requires_drawing_mode() {
+        // 六轮审查 P2-02：只允许 Drawing 模式开始截屏
+        assert!(ensure_capture_allowed(&OverlayMode::Drawing).is_ok());
+        let err = ensure_capture_allowed(&OverlayMode::Penetration).unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidState(_)),
+            "Penetration 下截屏应返回 InvalidState，得到 {err:?}"
+        );
+        let err = ensure_capture_allowed(&OverlayMode::Hidden).unwrap_err();
+        assert!(matches!(err, AppError::InvalidState(_)));
+    }
 }
