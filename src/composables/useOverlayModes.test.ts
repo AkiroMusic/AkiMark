@@ -433,4 +433,41 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(uiLocked.value).toBe(false);
     expect(modes.zoom.value).toBe(2);
   });
+
+  it("过渡锁窗口内 exitAnnotation 被拒：Exit 点击不得绕锁退出标注（九轮审查 P2）", async () => {
+    const { modes, uiLocked } = setup();
+    await modes.togglePenetration(); // 进入穿透
+    invokeMock.mockClear();
+    // M：exit IPC 挂起；capture 返回有效 base64
+    let releaseExit: () => void = () => {};
+    invokeMock.mockImplementation(
+      (cmd: string) =>
+        new Promise((resolve) => {
+          if (cmd === "exit_penetration_mode") {
+            releaseExit = () => resolve({});
+          } else if (cmd === "capture_screen") {
+            setTimeout(() => resolve("c2NyZWVu"), 50);
+          } else {
+            resolve({});
+          }
+        }),
+    );
+    const zoom = modes.toggleZoom();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(uiLocked.value).toBe(true); // 过渡锁生效
+    // 工具栏 Exit 点击 → exitAnnotation：必须被锁拒绝（exit_drawing 零调用）
+    void modes.exitAnnotation();
+    await Promise.resolve();
+    expect(invokeMock).not.toHaveBeenCalledWith("exit_drawing");
+    // 释放退出穿透：M 流程继续 → capture → zoom=2、锁复位
+    releaseExit();
+    await vi.advanceTimersByTimeAsync(60);
+    await zoom;
+    expect(modes.zoom.value).toBe(2);
+    expect(uiLocked.value).toBe(false);
+    // 锁释放后 exitAnnotation 正常工作（不误伤）
+    await modes.exitAnnotation();
+    expect(invokeMock).toHaveBeenCalledWith("exit_drawing");
+  });
 });

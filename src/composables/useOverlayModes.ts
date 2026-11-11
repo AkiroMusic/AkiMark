@@ -378,8 +378,11 @@ export function useOverlayModes(deps: {
     stepBack: () => dispatch({ type: "stepBack" }),
     /** 工具栏退出按钮：直接退出标注（不经 Esc 逐级） */
     // 工具栏退出按钮：先使在途 dispatch 失效（终态操作不得被迟到 effect
-    // 干扰），再走退出流程
+    // 干扰），再走退出流程。输入锁自检（九轮审查 P2）：过渡锁窗口内
+    // 工具栏仍渲染（乐观 showToolbar=true），Exit 点击不得绕过锁触发
+    // exit_drawing——该路径与 QA Hidden 同根，仅触发设备不同
     exitAnnotation: () => {
+      if (deps.uiLocked.get()) return;
       invalidatePendingDispatches();
       return runEffects([{ type: "invokeExitAnnotation" }], false);
     },

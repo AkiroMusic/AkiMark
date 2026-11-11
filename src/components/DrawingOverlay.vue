@@ -190,16 +190,18 @@ const {
 } = usePrefsSync({ drawing, boardDefault, setLocale });
 
 // ---- 模式状态机（板书/缩放/聚光灯/穿透/工具栏，互斥规则见 modeMutex.ts） ----
-// 导出/放大镜截屏期间锁定输入：防止键盘/指针事件篡改 history，导致导出图与所见不一致
-let uiLocked = false;
+// 导出/放大镜截屏期间锁定输入：防止键盘/指针事件篡改 history，导致导出图与所见不一致。
+// 用 ref 而非普通变量：锁状态要驱动 ToolToolbar 的 inert（九轮审查 P2，
+// 过渡锁窗口内工具栏整体禁交互）
+const uiLocked = ref(false);
 const modes = useOverlayModes({
   drawing,
   showToast,
   t,
   uiLocked: {
-    get: () => uiLocked,
+    get: () => uiLocked.value,
     set: (v) => {
-      uiLocked = v;
+      uiLocked.value = v;
     },
   },
   textEditing,
@@ -343,7 +345,7 @@ function resizeCanvases() {
 // ---- 指针事件 ----
 function onPointerDown(e: PointerEvent) {
   // 截屏导出期间锁定交互
-  if (uiLocked) return;
+  if (uiLocked.value) return;
   // 点击工具栏区域不画
   if (isOverToolbar(e)) return;
   // 已有手势进行中（左键绘制/右键擦除）时忽略新按键：startDraw 会覆盖
@@ -505,7 +507,7 @@ function isOverToolbar(e: PointerEvent): boolean {
 // ---- 快捷键（模式类动作转发给 useOverlayModes，互斥规则集中在 modeMutex.ts） ----
 function onKeyDown(e: KeyboardEvent) {
   // 截屏导出期间锁定快捷键
-  if (uiLocked) return;
+  if (uiLocked.value) return;
   // IME 组合期间不响应任何快捷键：组合态的 Enter/Esc 属于输入法操作
   //（选词/取消候选），不是用户指令
   if (e.isComposing) return;
@@ -995,6 +997,7 @@ onBeforeUnmount(() => {
     <!-- 浮动工具栏 -->
     <ToolToolbar
       v-if="showToolbar && !isPenetrating"
+      :locked="uiLocked"
       :tool="drawing.currentTool.value"
       :color="drawing.currentColor.value"
       :line-width="drawing.lineWidths.value"

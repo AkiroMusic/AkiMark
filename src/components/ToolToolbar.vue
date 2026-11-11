@@ -24,6 +24,9 @@ const props = defineProps<{
   initialPosition: { x: number; y: number } | null;
   /** 工具栏整体缩放（Ctrl+-/= 调整，0.6–1.5），防遮挡顶部内容 */
   scale: number;
+  /** 输入锁（截屏/模式过渡窗口）：inert 整体禁交互，防止绕过 uiLocked
+   *  直接触发退出/导出等入口（九轮审查 P2） */
+  locked?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -195,6 +198,7 @@ const rootStyle = computed(() => {
     ref="rootEl"
     class="toolbar double-bezel"
     data-toolbar
+    :inert="props.locked || undefined"
     :style="rootStyle"
     @pointerdown="onDragStart"
     @pointermove="onDragMove"
