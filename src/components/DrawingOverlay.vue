@@ -684,7 +684,7 @@ async function ensureBlurBase() {
   spotlight.value = false;
   textEditing.value = null;
 
-  uiLocked = true;
+  uiLocked.value = true;
   await new Promise((r) => requestAnimationFrame(() => r(null)));
 
   try {
@@ -699,7 +699,7 @@ async function ensureBlurBase() {
     console.warn("[akimark] ensure_blur_base capture_screen failed", err);
     showToast(t("action.captureFailed"));
   } finally {
-    uiLocked = false;
+    uiLocked.value = false;
     showToolbar.value = prevToolbar;
     spotlight.value = prevSpotlight;
     textEditing.value = prevText;
@@ -712,7 +712,7 @@ async function exportScreenshot() {
   if (exportInFlight) return;
   exportInFlight = true;
   commitActiveStroke();
-  uiLocked = true;
+  uiLocked.value = true;
   showToast(t("action.exporting"));
   try {
     const composite = await composeExportCanvas();
@@ -724,7 +724,7 @@ async function exportScreenshot() {
     console.warn("[akimark] export_screenshot failed", err);
     showToast(t("action.exportFailed"));
   } finally {
-    uiLocked = false;
+    uiLocked.value = false;
     exportInFlight = false;
   }
 }
@@ -734,7 +734,7 @@ async function copyAnnotation() {
   if (exportInFlight) return;
   exportInFlight = true;
   commitActiveStroke();
-  uiLocked = true;
+  uiLocked.value = true;
   try {
     const composite = await composeExportCanvas();
     const png = composite.toDataURL("image/png").split(",")[1];
@@ -744,7 +744,7 @@ async function copyAnnotation() {
     console.warn("[akimark] copy_annotation failed", err);
     showToast(t("action.copyFailed"));
   } finally {
-    uiLocked = false;
+    uiLocked.value = false;
     exportInFlight = false;
   }
 }
@@ -946,7 +946,7 @@ onBeforeUnmount(() => {
   }
   blurCaptureInFlight = false;
   exportInFlight = false;
-  uiLocked = false;
+  uiLocked.value = false;
 });
 </script>
 
