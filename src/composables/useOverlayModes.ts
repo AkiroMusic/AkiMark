@@ -188,21 +188,39 @@ export function useOverlayModes(deps: {
   }
 
   async function dispatch(action: ModeAction) {
+    // 输入锁自检（八轮审查）：uiLocked 期间拒绝新 dispatch。组件 onKeyDown
+    // 的检查是第一道门（真实按键路径），这里是第二道——绕过组件直调
+    // （测试/未来入口）也无法穿透锁。transitionLock 场景（下方 set(true)
+    // 之后）任何并发 dispatch 同样被拒，与组件拦截语义一致。
+    if (deps.uiLocked.get()) return;
     // revision 守卫（五轮审查 P2-01）：并发 dispatch 在 await 点交错时，
     // 被更新的 dispatch 取代的旧操作不得继续提交副作用或回滚——否则
     // "穿透态连按 B×2"会让旧 dispatch 在恢复执行后把板书标志重新打开
     const revision = ++dispatchRevision;
     const prev = snapshot();
+    // Zoom 过渡锁（八轮审查）：穿透态开启缩放时，退出穿透 IPC 在途期间
+    // uiLocked 仍为 false（captureZoomBackground 要等 IPC 完成才设锁）——
+    // 此窗口内的 Esc 经 stepBack 看到 zoom=0/spotlight=false/board=none，
+    // 会误走 invokeExitAnnotation 退出整个标注（QA Hidden 现象根因）。
+    // 在第一个 effect 之前锁输入，整个转换结束后释放。
+    const transitionLock = action.type === "toggleZoom" && prev.penetrating;
     const { state, effects } = applyModeAction(prev, action, {
       boardDefault: deps.boardDefault.value,
     });
-    writeBack(state);
-    await runEffects(
-      effects,
-      action.type === "togglePenetration",
-      prev,
-      () => revision === dispatchRevision,
-    );
+    if (transitionLock) deps.uiLocked.set(true);
+    try {
+      writeBack(state);
+      await runEffects(
+        effects,
+        action.type === "togglePenetration",
+        prev,
+        () => revision === dispatchRevision,
+      );
+    } finally {
+      // 复位不依赖 captureZoomBackground 的 finally：revision 失效提前
+      // return、capture 被拒等任何早退路径都经过本 finally，锁必然复位
+      if (transitionLock) deps.uiLocked.set(false);
+    }
   }
 
   /**

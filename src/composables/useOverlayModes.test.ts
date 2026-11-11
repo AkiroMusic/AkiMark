@@ -378,4 +378,60 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     expect(modes.zoomBg.value).toBeNull();
     expect(modes.zoom.value).toBe(0);
   });
+
+  it("穿透态 M 过渡锁：退出穿透 IPC 在途期间 Esc 不得退出标注（八轮审查）", async () => {
+    const { modes, uiLocked } = setup();
+    await modes.togglePenetration(); // 进入穿透
+    invokeMock.mockClear();
+    // M：exit IPC 手动挂起；capture 返回有效 base64（延迟 50ms）
+    let releaseExit: () => void = () => {};
+    invokeMock.mockImplementation(
+      (cmd: string) =>
+        new Promise((resolve, reject) => {
+          if (cmd === "exit_penetration_mode") {
+            releaseExit = () => resolve({});
+          } else if (cmd === "capture_screen") {
+            setTimeout(() => resolve("c2NyZWVu"), 50);
+          } else {
+            resolve({});
+          }
+        }),
+    );
+    const zoom = modes.toggleZoom();
+    await Promise.resolve();
+    await Promise.resolve();
+    // 过渡锁已在第一个 effect 之前生效：组件 onKeyDown 的 uiLocked 检查
+    // 会拦截此窗口内的 Esc/X/B（QA Hidden 现象的根因窗口）
+    expect(uiLocked.value).toBe(true);
+    // 锁缺失时此窗口的 stepBack 会走 invokeExitAnnotation 退出整个标注：
+    // dispatch 输入锁自检拒绝（GPT 指定断言：exit_drawing 零调用）
+    await modes.stepBack();
+    expect(invokeMock).not.toHaveBeenCalledWith("exit_drawing");
+    // 释放退出穿透：缩放流程继续 → capture（fake timer 推进 50ms）→ zoom=2
+    releaseExit();
+    await vi.advanceTimersByTimeAsync(60);
+    await zoom;
+    expect(modes.zoom.value).toBe(2);
+    expect(uiLocked.value).toBe(false);
+  });
+
+  it("非穿透态 M 不设过渡锁（capture 内部锁覆盖，行为不变）", async () => {
+    const { modes, uiLocked } = setup();
+    invokeMock.mockImplementation(
+      (cmd: string) =>
+        cmd === "capture_screen"
+          ? new Promise((resolve) => setTimeout(() => resolve("c2NyZWVu"), 20))
+          : Promise.resolve({}),
+    );
+    const zoom = modes.toggleZoom();
+    await Promise.resolve();
+    await Promise.resolve(); // rAF 后 capture 在途
+    // captureZoomBackground 自己的锁生效（非 dispatch 过渡锁），
+    // 但对外语义相同：uiLocked=true
+    expect(uiLocked.value).toBe(true);
+    await vi.advanceTimersByTimeAsync(30);
+    await zoom;
+    expect(uiLocked.value).toBe(false);
+    expect(modes.zoom.value).toBe(2);
+  });
 });
