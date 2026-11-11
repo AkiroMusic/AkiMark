@@ -240,16 +240,20 @@ export function useOverlayModes(deps: {
       deps.showToast(deps.t("action.zoom"));
     } catch (err) {
       console.warn("[akimark] toggle_zoom capture_screen failed", err);
-      // 失败提示仅当前 dispatch 有效时弹（过期的错误提示无意义）
-      if (!isCurrent || isCurrent()) {
+      // 失败提示仅当前 dispatch 有效且未处于穿透时弹：后端在穿透态拒绝
+      // 截屏（InvalidState）是模式切换的正常结果，不是故障（七轮审查 P2-01）
+      if ((!isCurrent || isCurrent()) && !isPenetrating.value) {
         deps.showToast(deps.t("action.captureFailed"));
       }
     } finally {
       deps.uiLocked.set(false);
       // 工具栏恢复仅当前 dispatch 有效：过期时恢复 prevToolbar 会覆盖
-      // 新操作已写入的工具栏状态
+      // 新操作已写入的工具栏状态。恢复值还须尊重穿透状态——穿透事件
+      // 不改变 revision，截屏在途期间的穿透切换（rAF 等待在模式锁外，
+      // 租约未建立）已把工具栏同步为隐藏，迟到的恢复不得重新显示
+      //（七轮审查 P2-01）
       if (!isCurrent || isCurrent()) {
-        showToolbar.value = prevToolbar;
+        showToolbar.value = isPenetrating.value ? false : prevToolbar;
       }
     }
   }
@@ -324,8 +328,11 @@ export function useOverlayModes(deps: {
     }
   }
 
-  /** 卸载清理：释放缩放底图 Blob URL */
+  /** 卸载清理：先失效在途 dispatch（卸载后恢复执行的截屏流程不得再创建
+   * Blob URL——组件已销毁，无人再做第二次释放；HMR/WebView 重载场景），
+   * 再释放缩放底图 Blob URL（七轮审查 P3） */
   function dispose() {
+    invalidatePendingDispatches();
     setZoomBg(null);
   }
 
