@@ -246,9 +246,10 @@ fn deactivate_drawing_locked(
     Ok(())
 }
 
-/// 切换标注模式（全局热键入口）。判定与执行在同一临界区内：
+/// 切换标注模式。判定与执行在同一临界区内：
 /// 两次并发 toggle 不可能都读到 Hidden 而双双执行 activate。
-pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
+/// source：日志来源标签（hotkey / tray），八轮审查的结构化日志区分触发入口。
+pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>, source: &str) {
     let result = {
         let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
         match *m {
@@ -263,9 +264,9 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
                     let state = app_for_thread.state::<AppState>();
                     state.disarm_activation_guard();
                 });
-                activate_drawing_locked(app, state, &mut m, "hotkey:toggle_drawing")
+                activate_drawing_locked(app, state, &mut m, source)
             }
-            _ => deactivate_drawing_locked(app, state, &mut m, "hotkey:toggle_drawing"),
+            _ => deactivate_drawing_locked(app, state, &mut m, source),
         }
     };
     if let Err(e) = result {

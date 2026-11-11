@@ -91,7 +91,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     {
         let mode_guard = state.mode.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = ensure_capture_allowed(&mode_guard) {
-            crate::log::log(&format!("capture_screen: {e}"));
+            crate::log::log(&format!("[capture] end: failed (mode-check): {e}"));
             spawn_guard_reset(&app);
             return Err(e);
         }
@@ -99,7 +99,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
             .capture_in_progress
             .swap(true, std::sync::atomic::Ordering::SeqCst)
         {
-            crate::log::log("capture_screen: 已有截屏进行中，拒绝并发截屏");
+            crate::log::log("[capture] end: failed (concurrent)");
             spawn_guard_reset(&app);
             return Err(AppError::CaptureFailed);
         }
@@ -109,7 +109,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
             state
                 .capture_in_progress
                 .store(false, std::sync::atomic::Ordering::SeqCst);
-            crate::log::log(&format!("capture_screen: 隐藏窗口失败: {e}"));
+            crate::log::log(&format!("[capture] end: failed (hide): {e}"));
             spawn_guard_reset(&app);
             return Err(AppError::CaptureFailed);
         }

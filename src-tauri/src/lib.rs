@@ -241,7 +241,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => {
                 let state = app.state::<AppState>();
-                overlay::toggle_drawing(app, &state);
+                overlay::toggle_drawing(app, &state, "tray:toggle_drawing");
             }
             "settings" => {
                 open_settings(app);
@@ -263,7 +263,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             {
                 let app = tray.app_handle();
                 let state = app.state::<AppState>();
-                overlay::toggle_drawing(app, &state);
+                overlay::toggle_drawing(app, &state, "tray:toggle_drawing");
             }
         })
         .build(app)?;

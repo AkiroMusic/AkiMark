@@ -23,7 +23,7 @@ pub fn register_shortcuts(app: &AppHandle) -> AppResult<()> {
 
     let mut conflicts: Vec<String> = Vec::new();
     if !register_one(app, &shortcuts.toggle_drawing, |app, state| {
-        overlay::toggle_drawing(app, state)
+        overlay::toggle_drawing(app, state, "hotkey:toggle_drawing")
     }) {
         conflicts.push(shortcuts.toggle_drawing.clone());
     }
@@ -161,7 +161,7 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
 
     let mut conflicts: Vec<String> = Vec::new();
     let ok_drawing = register_one(app, &shortcuts.toggle_drawing, |app, state| {
-        overlay::toggle_drawing(app, state)
+        overlay::toggle_drawing(app, state, "hotkey:toggle_drawing")
     });
     let ok_clear = register_one(app, &shortcuts.clear_drawing, |app, _state| {
         let _ = app.emit("clear-drawing", true);
@@ -176,7 +176,9 @@ pub fn save_shortcuts(app: &AppHandle, shortcuts: ShortcutConfig) -> AppResult<V
         conflicts.push(shortcuts.toggle_drawing.clone());
         let old = &old_shortcuts.toggle_drawing;
         if old != &shortcuts.toggle_drawing {
-            if !register_one(app, old, overlay::toggle_drawing) {
+            if !register_one(app, old, |app, state| {
+                overlay::toggle_drawing(app, state, "hotkey:toggle_drawing")
+            }) {
                 // 旧值也被占用：加入冲突并清空配置
                 conflicts.push(old.clone());
                 new_config.shortcuts.toggle_drawing = String::new();
