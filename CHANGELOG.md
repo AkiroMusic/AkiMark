@@ -78,8 +78,13 @@ config-validation hardening.
   together. Captures can only start in drawing mode (a click-through whose
   event was still in flight when the capture began would otherwise race the
   returning zoom commit); the frontend additionally refuses to commit the
-  zoom level if the penetration event has already arrived. The lock is never
-  held across BitBlt/encode.
+  zoom level if the penetration event has already arrived, and the capture's
+  finally block respects penetration state when restoring the toolbar (a
+  click-through that entered during the pre-capture frame never gets the
+  toolbar re-shown over it, and no "capture failed" toast is shown for that
+  intentional rejection). Disposing the overlay invalidates pending
+  dispatches so an in-flight capture can no longer create a Blob URL after
+  unmount. The lock is never held across BitBlt/encode.
 - **capture_screen guard leak** — a `WindowNotFound` early return after
   arming the activation guard never disarmed it, permanently disabling auto
   click-through. The window lookup now precedes arming, and the Hidden check
@@ -123,7 +128,7 @@ config-validation hardening.
   (per-dispatch ordering; concurrent dispatches may interleave at await
   points by design).
 
-Tests: 79 → 93 frontend, 22 → 26 Rust.
+Tests: 79 → 95 frontend, 22 → 26 Rust.
 
 ## [0.2.7] - 2026-11-10
 
