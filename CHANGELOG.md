@@ -22,8 +22,12 @@ config-validation hardening.
   warn only, and a failed board-flag IPC now rolls `boardMode` back.
 - **Stale dispatches stop submitting** — concurrent dispatches interleave at
   await points by design; a dispatch superseded by a newer one now stops
-  after its in-flight effect instead of committing remaining effects or
-  running rollbacks (a monotonic revision guard, not a global queue).
+  after its in-flight effect instead of committing remaining effects, writing
+  its own post-await UI state (toolbar restore), or running rollbacks (a
+  monotonic revision guard, not a global queue). Session-level resets
+  (`resetModes` via clear-drawing / re-entry / exit events, and the toolbar's
+  exit button) invalidate pending dispatches, so a board switch left hanging
+  on its exit-penetration IPC can no longer re-arm the flag after a clear.
   Previously, pressing B twice rapidly from click-through could leave the
   board flag on in the backend while the board UI was off, silently blocking
   click-through.
@@ -71,7 +75,11 @@ config-validation hardening.
   the Hidden check and re-show. Entering click-through is declined during the
   lease too — its event would clear the zoom level, and the returning capture
   would unconditionally reopen it, leaving click-through and zoom active
-  together. The lock is never held across BitBlt/encode.
+  together. Captures can only start in drawing mode (a click-through whose
+  event was still in flight when the capture began would otherwise race the
+  returning zoom commit); the frontend additionally refuses to commit the
+  zoom level if the penetration event has already arrived. The lock is never
+  held across BitBlt/encode.
 - **capture_screen guard leak** — a `WindowNotFound` early return after
   arming the activation guard never disarmed it, permanently disabling auto
   click-through. The window lookup now precedes arming, and the Hidden check
@@ -115,7 +123,7 @@ config-validation hardening.
   (per-dispatch ordering; concurrent dispatches may interleave at await
   points by design).
 
-Tests: 79 → 90 frontend, 22 → 25 Rust.
+Tests: 79 → 93 frontend, 22 → 26 Rust.
 
 ## [0.2.7] - 2026-11-10
 
