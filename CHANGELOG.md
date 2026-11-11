@@ -31,6 +31,17 @@ config-validation hardening.
   Previously, pressing B twice rapidly from click-through could leave the
   board flag on in the backend while the board UI was off, silently blocking
   click-through.
+- **Starting zoom from click-through locks input for the whole transition** —
+  during the exit-penetration IPC window the input lock was not yet set, so
+  an Escape arriving in that window saw no active overlay mode and quit the
+  entire annotation session (a real-machine QA finding, root-caused by
+  review). The transition lock is taken before the first effect and released
+  in the dispatch's own finally block, so revision invalidation, a rejected
+  capture, or any early return still releases it.
+- **Mode-transition structured logging** — every backend transition now logs
+  its source (hotkey / IPC / window-close / auto focus-loss), before and
+  after mode; the capture lifecycle logs start/end. Previously success paths
+  logged nothing, making post-hoc timeline reconstruction impossible.
 - **Board activation is rejected while hidden** — a late `set_board_active(true)`
   arriving after the overlay was deactivated could re-arm the board flag;
   the backend now rejects it with a new `InvalidState` error so the frontend
@@ -128,7 +139,7 @@ config-validation hardening.
   (per-dispatch ordering; concurrent dispatches may interleave at await
   points by design).
 
-Tests: 79 → 95 frontend, 22 → 26 Rust.
+Tests: 79 → 97 frontend, 22 → 26 Rust.
 
 ## [0.2.7] - 2026-11-10
 
