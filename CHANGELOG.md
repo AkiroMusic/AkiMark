@@ -44,8 +44,13 @@ config-validation hardening.
 - **Mode-transition structured logging** — every backend transition now logs
   its source (hotkey / tray / IPC / window-close / auto focus-loss), before
   and after mode; the capture lifecycle pairs a start entry with an end
-  entry on every path, including early exits. Previously success paths
-  logged nothing, making post-hoc timeline reconstruction impossible.
+  entry on every path, including early exits and the re-show retry failure.
+  Previously success paths logged nothing, making post-hoc timeline
+  reconstruction impossible.
+- **Toolbar dragging stops when the input lock engages** — a drag already in
+  progress (its pointer capture survives the toolbar becoming inert) is
+  explicitly terminated and released when the lock sets, and new drags are
+  declined while locked.
 - **Board activation is rejected while hidden** — a late `set_board_active(true)`
   arriving after the overlay was deactivated could re-arm the board flag;
   the backend now rejects it with a new `InvalidState` error so the frontend
