@@ -85,8 +85,10 @@ export function useOverlayModes(deps: {
    * 严格按序 await；并发 dispatch（如热键与指针入口同时触发）在 await 点
    * 仍可交错——同步裁决段（snapshot → writeBack）每次 dispatch 原子执行。
    * 跨 dispatch 的过期提交由 revision 守卫阻止（见 dispatch）：被更新操作
-   * 取代的旧 dispatch 完成已在途的 effect 后，不再提交后续副作用、也不再
-   * 执行回滚（回滚新操作已接管的状态是二次破坏）。
+   * 取代的旧 dispatch 完成已在途的 effect 后，不再提交后续副作用、成功收尾
+   * （如工具栏恢复）与回滚——await 之后的每一次状态提交都要先确认自己仍
+   * 是最新操作（六轮审查 P2-01）。resetModes / exitAnnotation 走
+   * invalidatePendingDispatches 使在途 dispatch 全部过期（会话级重置）。
    *
    * 失败语义分野：togglePenetration 路径回滚乐观状态并 toast；
    * 其余路径仅 console.warn（以后端为准，前端不盲目回滚），
@@ -116,11 +118,16 @@ export function useOverlayModes(deps: {
               : "exit_penetration_mode";
           try {
             await invoke(cmd);
+            // await 后提交也受 revision 约束（六轮审查 P2-01）：过期 dispatch
+            // 的成功收尾不得覆盖新操作的 UI 状态（穿透态 Space×2：第一次的
+            // 迟到返回会把第二次切好的工具栏重新显示）。
             // 进入穿透：工具栏隐藏（穿透中不可交互）；退出穿透：工具栏恢复。
             // 此前共用分支无条件隐藏、退出依赖后端 drawing-return 事件恢复，
             // 事件与 IPC resolve 的顺序竞争会把工具栏留在隐藏态。
-            showToolbar.value = fx.type === "invokeExitPenetration";
-            exitPenetrationOk = fx.type === "invokeExitPenetration";
+            if (!isCurrent || isCurrent()) {
+              showToolbar.value = fx.type === "invokeExitPenetration";
+              exitPenetrationOk = fx.type === "invokeExitPenetration";
+            }
           } catch (err) {
             exitPenetrationOk = false;
             console.warn(`[akimark] ${cmd} failed`, err);
@@ -167,7 +174,7 @@ export function useOverlayModes(deps: {
           if (fx.clearBackground) setZoomBg(null);
           break;
         case "zoomCapture":
-          await captureZoomBackground();
+          await captureZoomBackground(isCurrent);
           break;
         case "invokeExitAnnotation":
           try {
@@ -198,8 +205,13 @@ export function useOverlayModes(deps: {
     );
   }
 
-  /** 开启缩放的截屏流程：提交在途笔画 → 隐藏 UI → capture → Blob URL → 置倍率 */
-  async function captureZoomBackground() {
+  /**
+   * 开启缩放的截屏流程：提交在途笔画 → 隐藏 UI → capture → Blob URL → 置倍率。
+   * isCurrent（六轮审查 P2-02）：capture 在途期间本 dispatch 可能已过期或
+   * 延迟的穿透事件已把 isPenetrating 置 true——两种情况都不再提交 zoom/底图
+   *（否则穿透 ∧ 缩放并存）；uiLocked 仍必须在 finally 复位。
+   */
+  async function captureZoomBackground(isCurrent?: () => boolean) {
     // 统一入口提交在途笔画：renderTo 只渲染已提交 history，未提交笔画
     // 会缺席缩放底图；此前只有键盘 M/Z 路径做了提交，工具栏按钮没有
     deps.beforeCapture?.();
@@ -213,6 +225,11 @@ export function useOverlayModes(deps: {
 
     try {
       const base64 = await invoke<string>("capture_screen");
+      // 过期 dispatch 或截屏期间已进入穿透（延迟事件已把 isPenetrating
+      // 置 true）：不提交 zoom 与底图（底图 Blob 在 setZoomBg 前未创建，
+      // 此处直接放弃，无资源泄漏）
+      const stale = (isCurrent && !isCurrent()) || isPenetrating.value;
+      if (stale) return;
       // base64 → Blob URL：data URL 会把整屏 PNG 的 base64 字符串常驻内存
       //（4K/8K 下数十 MB），Blob URL 只持解码位图且可及时 revoke
       const bin = atob(base64);
@@ -223,10 +240,17 @@ export function useOverlayModes(deps: {
       deps.showToast(deps.t("action.zoom"));
     } catch (err) {
       console.warn("[akimark] toggle_zoom capture_screen failed", err);
-      deps.showToast(deps.t("action.captureFailed"));
+      // 失败提示仅当前 dispatch 有效时弹（过期的错误提示无意义）
+      if (!isCurrent || isCurrent()) {
+        deps.showToast(deps.t("action.captureFailed"));
+      }
     } finally {
       deps.uiLocked.set(false);
-      showToolbar.value = prevToolbar;
+      // 工具栏恢复仅当前 dispatch 有效：过期时恢复 prevToolbar 会覆盖
+      // 新操作已写入的工具栏状态
+      if (!isCurrent || isCurrent()) {
+        showToolbar.value = prevToolbar;
+      }
     }
   }
 
@@ -264,8 +288,19 @@ export function useOverlayModes(deps: {
     if (next !== zoom.value) zoom.value = next;
   }
 
+  /** 使所有在途 dispatch 失效（六轮审查 P2-01）：resetModes 与退出标注是
+   * 会话级重置，之后恢复执行的旧 dispatch 不得再提交任何副作用——
+   * Hidden 守卫是状态条件保护而非代际保护，clear-drawing 不改模式，
+   * 管不住"模式仍是 Drawing 时迟到的 set_board_active(true)" */
+  function invalidatePendingDispatches() {
+    dispatchRevision += 1;
+  }
+
   /** 复位叠加态（随清屏与模式切换一起重置），板书/缩放/聚光灯全部退回 */
   function resetModes() {
+    // 先失效在途 dispatch 再复位状态（clear-drawing / drawing / hidden
+    // 事件三个入口共享本函数）
+    invalidatePendingDispatches();
     boardMode.value = "none";
     deps.drawing.setBlurBaseColor(null);
     zoom.value = 0;
@@ -313,7 +348,12 @@ export function useOverlayModes(deps: {
     togglePenetration: () => dispatch({ type: "togglePenetration" }),
     stepBack: () => dispatch({ type: "stepBack" }),
     /** 工具栏退出按钮：直接退出标注（不经 Esc 逐级） */
-    exitAnnotation: () => runEffects([{ type: "invokeExitAnnotation" }], false),
+    // 工具栏退出按钮：先使在途 dispatch 失效（终态操作不得被迟到 effect
+    // 干扰），再走退出流程
+    exitAnnotation: () => {
+      invalidatePendingDispatches();
+      return runEffects([{ type: "invokeExitAnnotation" }], false);
+    },
     toggleToolbarWithSpace,
     onWheel,
     resetModes,
