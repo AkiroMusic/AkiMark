@@ -105,7 +105,10 @@ export function useOverlayModes(deps: {
     let exitPenetrationOk: boolean | null = null;
     for (const fx of effects) {
       // 过期 dispatch：让已在途的 effect 完成后就此打住——新操作已接管状态
-      if (isCurrent && !isCurrent()) return;
+      if (isCurrent && !isCurrent()) {
+        console.info("[mode] dispatch superseded");
+        return;
+      }
       switch (fx.type) {
         case "toast":
           deps.showToast(deps.t(`action.${fx.key}`));
@@ -197,6 +200,7 @@ export function useOverlayModes(deps: {
     // 被更新的 dispatch 取代的旧操作不得继续提交副作用或回滚——否则
     // "穿透态连按 B×2"会让旧 dispatch 在恢复执行后把板书标志重新打开
     const revision = ++dispatchRevision;
+    console.info(`[mode] dispatch ${action.type} rev=${revision}`);
     const prev = snapshot();
     // Zoom 过渡锁（八轮审查）：穿透态开启缩放时，退出穿透 IPC 在途期间
     // uiLocked 仍为 false（captureZoomBackground 要等 IPC 完成才设锁）——

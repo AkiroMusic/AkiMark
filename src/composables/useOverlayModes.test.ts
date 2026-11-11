@@ -387,7 +387,7 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
     let releaseExit: () => void = () => {};
     invokeMock.mockImplementation(
       (cmd: string) =>
-        new Promise((resolve, reject) => {
+        new Promise((resolve) => {
           if (cmd === "exit_penetration_mode") {
             releaseExit = () => resolve({});
           } else if (cmd === "capture_screen") {
@@ -417,11 +417,10 @@ describe("useOverlayModes 异步副作用串行化（二轮审查）", () => {
 
   it("非穿透态 M 不设过渡锁（capture 内部锁覆盖，行为不变）", async () => {
     const { modes, uiLocked } = setup();
-    invokeMock.mockImplementation(
-      (cmd: string) =>
-        cmd === "capture_screen"
-          ? new Promise((resolve) => setTimeout(() => resolve("c2NyZWVu"), 20))
-          : Promise.resolve({}),
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "capture_screen"
+        ? new Promise((resolve) => setTimeout(() => resolve("c2NyZWVu"), 20))
+        : Promise.resolve({}),
     );
     const zoom = modes.toggleZoom();
     await Promise.resolve();

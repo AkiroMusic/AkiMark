@@ -107,10 +107,12 @@ pub fn get_mode(state: &State<'_, AppState>) -> OverlayMode {
 /// 交错正确性由"单锁贯穿 + 判定在锁内"的结构性保证 + 真机 QA 覆盖。
 ///
 /// 进入绘制模式核心：定位 → 置顶 → 可交互 → 显示 → 聚焦 → 钳制 → 提交。
+/// source：触发来源标签（日志时间线用，八轮审查）。
 fn activate_drawing_locked(
     app: &AppHandle,
     state: &State<'_, AppState>,
     m: &mut OverlayMode,
+    source: &str,
 ) -> AppResult<()> {
     // 截屏生命周期（四轮审查 P2-02）：hide → BitBlt → 重显期间 overlay 必须
     // 保持隐藏，激活一律拒绝。no-op 而非错误——热键窗口期内的按下无效，
@@ -183,6 +185,7 @@ fn activate_drawing_locked(
     }
 
     *m = OverlayMode::Drawing;
+    crate::log::log(&format!("[mode] {source}: Hidden → Drawing"));
     let _ = app.emit("overlay-mode-changed", "drawing");
     Ok(())
 }
@@ -203,9 +206,13 @@ fn fallback_position(window: &tauri::WebviewWindow) {
 }
 
 /// 退出绘制模式：隐藏窗口、释放光标限制（模式锁贯穿完整转换）。
-pub fn deactivate_drawing(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
+pub fn deactivate_drawing(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    source: &str,
+) -> AppResult<()> {
     let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
-    deactivate_drawing_locked(app, state, &mut m)
+    deactivate_drawing_locked(app, state, &mut m, source)
 }
 
 /// 退出绘制模式核心（锁已持有）。
@@ -213,6 +220,7 @@ fn deactivate_drawing_locked(
     app: &AppHandle,
     state: &State<'_, AppState>,
     m: &mut OverlayMode,
+    source: &str,
 ) -> AppResult<()> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
@@ -230,6 +238,7 @@ fn deactivate_drawing_locked(
     #[cfg(target_os = "windows")]
     win32::release_cursor();
     *m = OverlayMode::Hidden;
+    crate::log::log(&format!("[mode] {source}: Drawing → Hidden"));
     // 离开绘制模式即结束板书模式（webview 重载后前端标志可能丢失，后端兜底复位）。
     // 直接写原子量：set_board_active 也取模式锁，锁内不得再入。
     state.board_active.store(false, Ordering::SeqCst);
@@ -254,9 +263,9 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
                     let state = app_for_thread.state::<AppState>();
                     state.disarm_activation_guard();
                 });
-                activate_drawing_locked(app, state, &mut m)
+                activate_drawing_locked(app, state, &mut m, "hotkey:toggle_drawing")
             }
-            _ => deactivate_drawing_locked(app, state, &mut m),
+            _ => deactivate_drawing_locked(app, state, &mut m, "hotkey:toggle_drawing"),
         }
     };
     if let Err(e) = result {
@@ -265,9 +274,13 @@ pub fn toggle_drawing(app: &AppHandle, state: &State<'_, AppState>) {
 }
 
 /// 进入穿透模式：标注保留可见，鼠标事件穿透到下方应用。
-pub fn enter_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
+pub fn enter_penetration_mode(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    source: &str,
+) -> AppResult<()> {
     let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
-    enter_penetration_locked(app, state, &mut m)
+    enter_penetration_locked(app, state, &mut m, source)
 }
 
 /// 进入穿透核心（锁已持有）：检查-执行-提交原子化。
@@ -279,6 +292,7 @@ fn enter_penetration_locked(
     app: &AppHandle,
     state: &State<'_, AppState>,
     m: &mut OverlayMode,
+    source: &str,
 ) -> AppResult<()> {
     // 幂等：已在穿透模式 / 隐藏状态直接返回
     if *m == OverlayMode::Penetration || *m == OverlayMode::Hidden {
@@ -311,21 +325,26 @@ fn enter_penetration_locked(
     #[cfg(target_os = "windows")]
     win32::release_cursor();
     *m = OverlayMode::Penetration;
+    crate::log::log(&format!("[mode] {source}: Drawing → Penetration"));
     let _ = app.emit("overlay-mode-changed", "penetration");
     Ok(())
 }
 
 /// 退出穿透模式，回到绘制。
-pub fn exit_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<()> {
+pub fn exit_penetration_mode(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    source: &str,
+) -> AppResult<()> {
     let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
-    exit_penetration_locked(app, &mut m)
+    exit_penetration_locked(app, &mut m, source)
 }
 
 /// 退出穿透核心（锁已持有）：可交互 → 提交 → 钳制 → 广播全部在同一临界区。
 /// 此前光标钳制与事件在锁外执行：与并发的进入穿透交错会留下"后端已穿透、
 /// 光标却被重新钳制、前端收到迟到 drawing-return"的三方不一致
 ///（三轮审查 P1-01A）。
-fn exit_penetration_locked(app: &AppHandle, m: &mut OverlayMode) -> AppResult<()> {
+fn exit_penetration_locked(app: &AppHandle, m: &mut OverlayMode, source: &str) -> AppResult<()> {
     // 幂等：隐藏状态无需退出穿透
     if *m == OverlayMode::Hidden {
         return Ok(());
@@ -335,6 +354,7 @@ fn exit_penetration_locked(app: &AppHandle, m: &mut OverlayMode) -> AppResult<()
         .ok_or(crate::error::AppError::WindowNotFound(OVERLAY_LABEL.into()))?;
     window.set_ignore_cursor_events(false)?;
     *m = OverlayMode::Drawing;
+    crate::log::log(&format!("[mode] {source}: Penetration → Drawing"));
     // 回到绘制模式：重新限制光标到 overlay 窗口（画布）所在显示器。
     // 不能按光标所在屏钳制：穿透期间光标可能已移到其他显示器，
     // 钳在光标屏会把用户困在没有画布的屏上（点击无响应）。
@@ -355,8 +375,12 @@ pub fn toggle_penetration_mode(app: &AppHandle, state: &State<'_, AppState>) {
     let result = {
         let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
         match *m {
-            OverlayMode::Penetration => exit_penetration_locked(app, &mut m),
-            OverlayMode::Drawing => enter_penetration_locked(app, state, &mut m),
+            OverlayMode::Penetration => {
+                exit_penetration_locked(app, &mut m, "hotkey:toggle_penetration")
+            }
+            OverlayMode::Drawing => {
+                enter_penetration_locked(app, state, &mut m, "hotkey:toggle_penetration")
+            }
             _ => Ok(()),
         }
     };
@@ -378,7 +402,7 @@ pub fn set_board_active(
 ) -> AppResult<()> {
     let mut m = state.mode.lock().unwrap_or_else(|e| e.into_inner());
     set_board_active_locked(&mut m, &state.board_active, active, |m| {
-        exit_penetration_locked(app, m)
+        exit_penetration_locked(app, m, "ipc:set_board_active")
     })
 }
 

@@ -77,6 +77,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
     // 截屏期间抑制"失焦自动穿透"：隐藏窗口会导致失焦，避免误触发穿透模式。
     // 计数语义：若隐藏/显示期间用户又激活过，短臂复位不会清掉长臂。
     state.arm_activation_guard();
+    crate::log::log("[capture] start");
 
     // 模式锁内：先校验当前模式，再置位截屏租约并隐藏窗口。只允许 Drawing
     // 状态开始截屏（六轮审查 P2-02）：穿透已提交但事件尚未送达前端时，
@@ -147,6 +148,10 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
 
     // 延迟复位 guard：窗口已稳定聚焦后解除激活保护（见 spawn_guard_reset 注释）
     spawn_guard_reset(&app);
+    crate::log::log(&format!(
+        "[capture] end: {}",
+        if result.is_ok() { "ok" } else { "failed" }
+    ));
 
     result
 }
@@ -358,7 +363,7 @@ pub fn get_shortcut_conflicts(app: AppHandle) -> Vec<String> {
 
 #[tauri::command]
 pub fn exit_drawing(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    overlay::deactivate_drawing(&app, &state)
+    overlay::deactivate_drawing(&app, &state, "ipc:exit_drawing")
 }
 
 #[tauri::command]
@@ -396,12 +401,12 @@ pub fn get_autostart(app: AppHandle) -> AppResult<bool> {
 #[tauri::command]
 pub fn enter_penetration_mode(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     // 不吞错：失败传回前端，乐观翻转才有回滚依据（useOverlayModes）
-    overlay::enter_penetration_mode(&app, &state)
+    overlay::enter_penetration_mode(&app, &state, "ipc:enter_penetration")
 }
 
 #[tauri::command]
 pub fn exit_penetration_mode(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    overlay::exit_penetration_mode(&app, &state)
+    overlay::exit_penetration_mode(&app, &state, "ipc:exit_penetration")
 }
 
 /// 同步板书模式标志（前端在板书开关时调用）：板书期间穿透不可用，
@@ -424,7 +429,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             api.prevent_close();
             let app = window.app_handle();
             let state = app.state::<AppState>();
-            if let Err(e) = overlay::deactivate_drawing(app, &state) {
+            if let Err(e) = overlay::deactivate_drawing(app, &state, "window:close") {
                 crate::log::log(&format!("handle_window_event: overlay 关闭转退出失败: {e}"));
             }
         }
@@ -501,7 +506,9 @@ pub fn handle_focus_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
                 match w.is_focused() {
                     Ok(false) => {
-                        if let Err(e) = overlay::enter_penetration_mode(&app, &state) {
+                        if let Err(e) =
+                            overlay::enter_penetration_mode(&app, &state, "auto:focus-loss")
+                        {
                             crate::log::log(&format!("handle_focus_event: 自动穿透失败: {e}"));
                         }
                     }
