@@ -138,7 +138,7 @@ pub fn capture_screen(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
             crate::log::log(&format!("capture_screen: 重新显示窗口失败（重试前）: {e}"));
             std::thread::sleep(std::time::Duration::from_millis(50));
             if let Err(e2) = window.show() {
-                crate::log::log(&format!("capture_screen: 重新显示窗口重试仍失败: {e2}"));
+                crate::log::log(&format!("[capture] end: failed (show-retry): {e2}"));
                 drop(mode_guard);
                 spawn_guard_reset(&app);
                 return Err(AppError::CaptureFailed);

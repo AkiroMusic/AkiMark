@@ -120,6 +120,8 @@ const pos = ref<{ x: number; y: number } | null>(
 let dragOrigin: { x: number; y: number; px: number; py: number } | null = null;
 
 function onDragStart(e: PointerEvent) {
+  // 输入锁期间不得开始拖动（inert 正常路径已拦，此处兜底绕过路径）
+  if (props.locked) return;
   // 只允许从工具栏空白区拖动；按钮/色块/输入框照常工作
   const target = e.target as HTMLElement | null;
   if (target?.closest("button, input")) return;
@@ -130,6 +132,17 @@ function onDragStart(e: PointerEvent) {
 }
 function onDragMove(e: PointerEvent) {
   if (!dragOrigin || !rootEl.value) return;
+  // 锁置位后终止已开始的拖动：inert 不影响 setPointerCapture 捕获中的
+  // 指针事件流，需显式清 origin 并释放捕获（九轮复审 P3）
+  if (props.locked) {
+    dragOrigin = null;
+    try {
+      rootEl.value.releasePointerCapture(e.pointerId);
+    } catch {
+      // 指针已释放（正常结束/取消）时忽略
+    }
+    return;
+  }
   const rect = rootEl.value.getBoundingClientRect();
   const maxX = window.innerWidth - rect.width;
   const maxY = window.innerHeight - rect.height;
